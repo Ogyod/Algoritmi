@@ -28,7 +28,7 @@ class APITests(unittest.TestCase):
         return urlopen(Request(self.url + path, data=json.dumps(body).encode(), headers=headers), timeout=10)
 
     def test_frontend_and_health(self):
-        for path in ['/', '/app.js', '/domain.js', '/api/health']:
+        for path in ['/', '/app.js', '/domain.js', '/processor.js', '/api/health']:
             with urlopen(self.url + path) as response:
                 self.assertEqual(response.status, 200)
                 self.assertTrue(response.read())
@@ -62,14 +62,6 @@ class APITests(unittest.TestCase):
             self.post('/api/reinterpret', {'lines': [{'text': [], 'page': 1, 'confidence': 1}], 'type': 'diploma_master'})
         self.assertEqual(error.exception.code, 422)
 
-    def test_export_attachment_utf8_and_single_use(self):
-        with self.post('/api/export', {'format': 'json', 'content': '{"номер":"0012345"}'}) as response:
-            link = json.load(response)['url']
-        with urlopen(self.url + link) as response:
-            self.assertIn('attachment', response.headers['Content-Disposition'])
-            self.assertEqual(json.load(response)['номер'], '0012345')
-        with self.assertRaises(HTTPError) as error: urlopen(self.url + link)
-        self.assertEqual(error.exception.code, 404)
 
 
 if __name__ == '__main__': unittest.main()

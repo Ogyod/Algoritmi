@@ -10,10 +10,8 @@ import shutil
 import subprocess
 import tempfile
 import threading
-import time
-import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps, ImageFilter, UnidentifiedImageError
 import pypdfium2 as pdfium
 from core import DOCUMENT_TYPES, interpret, interpret_lines
 
@@ -23,8 +21,6 @@ MAX_BODY = 29 * 1024 * 1024
 MAX_PAGES = 20
 Image.MAX_IMAGE_PIXELS = 30_000_000
 OCR_LOCK = threading.Lock()
-EXPORTS = {}
-EXPORT_LOCK = threading.Lock()
 
 def node_environment():
     env = os.environ.copy()
@@ -69,7 +65,11 @@ def process(data, kind):
             image.thumbnail((2400, 3200))
             path = Path(temp) / f'{number}.png'
             image.save(path)
-            images.append({'path': str(path), 'width': image.width, 'height': image.height})
+            enhanced = Path(temp) / f'{number}-enhanced.png'
+            ImageOps.autocontrast(ImageOps.grayscale(image).filter(
+                ImageFilter.GaussianBlur(.8)), cutoff=1).save(enhanced)
+            images.append({'path': str(path), 'enhanced_path': str(enhanced),
+                           'width': image.width, 'height': image.height})
             image.thumbnail((1000, 1400))
             buffer = io.BytesIO()
             image.save(buffer, 'JPEG', quality=83)
@@ -110,6 +110,8 @@ def process(data, kind):
                         raise ValueError('Изображение должно содержать не более 20 страниц.')
                     for i in range(frames):
                         image.seek(i)
+                        if image.width * image.height > Image.MAX_IMAGE_PIXELS:
+                            raise ValueError('Размер страницы изображения превышает 30 миллионов пикселей.')
                         handle_image(image.copy(), i+1)
             except (UnidentifiedImageError, Image.DecompressionBombError, OSError):
                 raise ValueError('Не удалось прочитать изображение. Используйте PDF, JPEG, PNG, TIFF или WEBP.')
@@ -153,24 +155,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(403, {'error': 'Недопустимый адрес запроса.'})
         if self.path == '/api/health':
             return self.send(200, {'ok': True, 'app': 'admissions-document-processor', 'engine': engine(), 'max_bytes': MAX_BYTES})
-        if self.path.startswith('/api/download/'):
-            token = self.path.removeprefix('/api/download/')
-            with EXPORT_LOCK:
-                item = EXPORTS.pop(token, None)
-            if not item or item['expires'] < time.monotonic():
-                return self.send(404, {'error': 'Ссылка истекла. Повторите выгрузку.'})
-            self.send_response(200)
-            self.send_header('Content-Type', item['mime'])
-            self.send_header('Content-Disposition', f'attachment; filename="{item["name"]}"')
-            self.send_header('Content-Length', str(len(item['content'])))
-            self.send_header('Cache-Control', 'no-store')
-            self.send_header('X-Content-Type-Options', 'nosniff')
-            self.end_headers()
-            self.wfile.write(item['content'])
-            return
         files = {'/': ('index.html', 'text/html; charset=utf-8'),
                  '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                  '/domain.js': ('domain.js', 'text/javascript; charset=utf-8'),
+                 '/processor.js': ('processor.js', 'text/javascript; charset=utf-8'),
                  '/style.css': ('style.css', 'text/css; charset=utf-8'),
                  '/favicon.svg': ('favicon.svg', 'image/svg+xml')}
         item = files.get(self.path)
@@ -183,7 +171,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(403, {'error': 'Недопустимый адрес запроса.'})
         if self.headers.get('Origin') not in [None, f'http://127.0.0.1:{self.server.server_port}', f'http://localhost:{self.server.server_port}']:
             return self.send(403, {'error': 'Запрос разрешён только из локального интерфейса.'})
-        if self.path not in ['/api/process', '/api/reinterpret', '/api/export']:
+        if self.path not in ['/api/process', '/api/reinterpret']:
             return self.send(404, {'error': 'Неизвестный запрос.'})
         processing = self.path == '/api/process'
         if processing and not OCR_LOCK.acquire(blocking=False):
@@ -207,27 +195,6 @@ class Handler(BaseHTTPRequestHandler):
                             or not 0 <= line['confidence'] <= 1):
                         raise ValueError('Некорректная строка распознанного текста.')
                 return self.send(200, interpret_lines(lines, body.get('type', 'auto')))
-            if self.path == '/api/export':
-                if not isinstance(body, dict) or body.get('format') not in ['json','csv'] or not isinstance(body.get('content'), str):
-                    raise ValueError('Некорректная выгрузка.')
-                content = body['content'].encode('utf-8')
-                if len(content) > 5 * 1024 * 1024:
-                    raise ValueError('Выгрузка слишком большая.')
-                ext = body['format']
-                token = secrets.token_urlsafe(24)
-                with EXPORT_LOCK:
-                    for old in list(EXPORTS):
-                        if EXPORTS[old]['expires'] < time.monotonic():
-                            del EXPORTS[old]
-                    while len(EXPORTS) >= 16:
-                        del EXPORTS[next(iter(EXPORTS))]
-                    EXPORTS[token] = {'content': content, 'expires': time.monotonic()+120,
-                                      'name': ('demo-result' if body.get('demo') else 'admissions-result')+'.'+ext,
-                                      'mime': ('application/json' if ext == 'json' else 'text/csv')+'; charset=utf-8'}
-                cleanup = threading.Timer(120, expire_export, args=(token,))
-                cleanup.daemon = True
-                cleanup.start()
-                return self.send(200, {'url': '/api/download/' + token})
             if not isinstance(body, dict) or not isinstance(body.get('data'), str):
                 raise ValueError('Не переданы данные файла.')
             data = base64.b64decode(body['data'], validate=True)
@@ -244,11 +211,6 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             if processing:
                 OCR_LOCK.release()
-
-def expire_export(token):
-    with EXPORT_LOCK:
-        EXPORTS.pop(token, None)
-
 
 def make_server(port=8765):
     return ThreadingHTTPServer(('127.0.0.1', port), Handler)

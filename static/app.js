@@ -8,6 +8,7 @@ import {
   packetCSV,
   reviewError,
 } from "./domain.js";
+import {browserMode, processDocument, reinterpretDocument, downloadPacket} from "./processor.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -90,7 +91,7 @@ function renderQueue() {
     .map((file) => {
       const status =
         file.status === "processing"
-          ? "Распознаём…"
+          ? file.progress || "Распознаём…"
           : file.status === "done"
             ? file.result.reviewed
               ? "Проверен"
@@ -287,18 +288,6 @@ function edit() {
   }
 }
 
-async function requestJSON(path, body) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(200000),
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || "Ошибка обработки");
-  return result;
-}
-
 async function processFiles() {
   if (state.busy || state.demo) return;
   state.busy = true;
@@ -310,16 +299,9 @@ async function processFiles() {
       file.status = "processing";
       render();
       try {
-        const data = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result.split(",")[1]);
-          reader.onerror = () =>
-            reject(new Error("Не удалось прочитать файл."));
-          reader.readAsDataURL(file.file);
-        });
-        file.result = await requestJSON("/api/process", {
-          data,
-          type: file.kind,
+        file.result = await processDocument(file.file, file.kind, (message) => {
+          file.progress = message;
+          renderQueue();
         });
         file.status = "done";
         if (Object.hasOwn(DOCUMENT_TYPES, file.result.type))
@@ -359,10 +341,7 @@ async function changeCategory(file, kind) {
   render();
   try {
     const previous = file.result;
-    const result = await requestJSON("/api/reinterpret", {
-      lines: previous.ocr_lines,
-      type: kind,
-    });
+    const result = await reinterpretDocument(previous.ocr_lines, kind);
     // Reuse OCR text and previews; do not recognize the same scan again.
     result.pages = previous.pages;
     result.engine = previous.engine;
@@ -398,21 +377,8 @@ async function exportPacket(formatType) {
     demo: state.demo,
   };
   try {
-    const download = await requestJSON("/api/export", {
-      format: formatType,
-      content:
-        formatType === "json"
-          ? JSON.stringify(result, null, 2)
-          : packetCSV(result),
-      demo: state.demo,
-    });
-    const link = document.createElement("a");
-    link.href = download.url;
-    link.download =
-      (state.demo ? "demo-result" : "admissions-result") + "." + formatType;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    downloadPacket(formatType === "json" ? JSON.stringify(result, null, 2) : packetCSV(result),
+                   formatType, state.demo);
   } catch (error) {
     toast(error.message);
   }
@@ -465,10 +431,11 @@ $("result-content").oninput = (event) => {
   const result = selected()?.result,
     target = event.target;
   if (!result || state.busy) return;
-  if (target.dataset.grade != null)
+  if (target.dataset.grade != null) {
     result.grades[+target.dataset.grade].grade =
       target.value === "" ? null : Number(target.value);
-  else if (target.dataset.subject != null)
+    result.grades[+target.dataset.grade].conflict = false;
+  } else if (target.dataset.subject != null)
     result.grades[+target.dataset.subject].subject = target.value;
   else if (target.id === "document-series")
     result.document_series = target.value;
@@ -612,7 +579,8 @@ $("demo").onclick = () => {
   );
 };
 
-fetch("/api/health")
+if (browserMode) $("engine").textContent = "Распознавание в браузере";
+else fetch("/api/health")
   .then((response) => response.json())
   .then((result) => {
     $("engine").textContent = result.engine

@@ -8,3 +8,4 @@ uploads/
 exports/
 .env
 *.log
+dist/

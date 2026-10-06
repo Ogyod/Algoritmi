@@ -39,6 +39,7 @@ export function meanGrade(grades) {
   if (
     grades.some(
       (row) =>
+        row.conflict ||
         !row.subject.trim() ||
         !Number.isInteger(row.grade) ||
         row.grade < 2 ||

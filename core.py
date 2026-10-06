@@ -1,5 +1,7 @@
 """Interpret OCR text without executing or trusting instructions in documents."""
 import re
+import json
+from pathlib import Path
 from decimal import Decimal, ROUND_HALF_UP
 
 DOCUMENT_TYPES = {
@@ -14,16 +16,13 @@ DOCUMENT_TYPES = {
 }
 EDUCATION_TYPES = set(DOCUMENT_TYPES) - {'achievement'}
 CERTIFICATE_TYPES = {'certificate_9', 'certificate_11'}
-SUBJECTS = [
-    'Русский язык', 'Литература', 'Алгебра и начала математического анализа',
-    'Алгебра', 'Геометрия', 'Математика', 'Информатика', 'История',
-    'Обществознание', 'География', 'Биология', 'Физика', 'Химия',
-    'Физическая культура', 'Иностранный язык', 'Английский язык',
-    'Немецкий язык', 'Французский язык', 'Технология',
-    'Основы безопасности жизнедеятельности', 'Основы безопасности и защиты Родины',
-    'Индивидуальный проект', 'Вероятность и статистика', 'Астрономия',
-    'Основы духовно-нравственной культуры народов России',
-]
+SUBJECT_CATALOG = json.loads(Path(__file__).with_name('subjects.json').read_text(encoding='utf-8'))
+SUBJECT_PATTERNS = sorted(
+    [(name, re.compile(r'(?<!\w)' + re.escape(normalize_name) + r'(?!\w)'))
+     for name in SUBJECT_CATALOG
+     for normalize_name in [name.lower().replace('ё', 'е'),
+                            *[a.lower().replace('ё', 'е') for a in SUBJECT_CATALOG[name]]]],
+    key=lambda item: len(item[1].pattern), reverse=True)
 GRADE_WORDS = {'отлично': 5, 'хорошо': 4, 'удовлетворительно': 3,
                'неудовлетворительно': 2}
 
@@ -47,44 +46,72 @@ def group_lines(blocks):
     rows = []
     for block in sorted(blocks, key=lambda b: (b.get('y', 0), b.get('x', 0))):
         center = block.get('y', 0) + block.get('height', .02) / 2
-        target = next((row for row in rows if abs(center - row['center']) <
-                       .55 * max(block.get('height', .02), row['height'])), None)
+        height = block.get('height', .02)
+        target = next((row for row in rows
+                       if max(height, row['height']) <= 3 * min(height, row['height'])
+                       and abs(center - row['center']) < .55 * max(height, row['height'])), None)
         if target is None:
             rows.append({'center': center, 'height': block.get('height', .02), 'blocks': [block]})
         else:
             target['blocks'].append(block)
     return [{'text': ' '.join(b['text'] for b in sorted(r['blocks'], key=lambda b: b.get('x', 0))),
-             'confidence': min(b.get('confidence', 0) for b in r['blocks'])} for r in rows]
+             'confidence': min(b.get('confidence', 0) for b in r['blocks'])}
+            for r in sorted(rows, key=lambda row: row['center'])]
 
 
 def extract_grades(lines):
     result = []
+    table_pages = {line.get('page', 1) for line in lines
+                   if re.search(r'наименование учебных предметов|итогов\w* (?:отмет|оцен)',
+                                normalize(line['text']))}
     for line in lines:
         text = normalize(line['text'])
-        subject = next((s for s in sorted(SUBJECTS, key=len, reverse=True)
-                        if normalize(s) in text), None)
-        if not subject:
-            continue
+        match = next(((name, m) for name, pattern in SUBJECT_PATTERNS
+                      if (m := pattern.search(text))), None)
+        known_subject = bool(match)
+        if match:
+            subject, subject_match = match
+            tail = text[subject_match.end():]
+            if subject in {'Иностранный язык', 'Второй иностранный язык', 'Родной язык', 'Родная литература'}:
+                language = re.match(r'\s*\(([а-я -]{2,40})\)', tail)
+                if language:
+                    subject += ' (' + language[1] + ')'
+                    tail = tail[language.end():]
+        else:
+            # Keep an unfamiliar subject from a grade table for manual review.
+            # Do not extract names or random numbers from the title page.
+            candidate = re.fullmatch(
+                r'(?:\d+[.)]?\s+)?([а-я][а-я ()/.,-]{2,100}?)\s+'
+                r'([2-5](?:\s*\([^)]*\))?|\(?отлично\)?|\(?хорошо\)?|'
+                r'\(?удовлетворительно\)?|\(?неудовлетворительно\)?)[ .|]*', text)
+            if line.get('page', 1) not in table_pages or not candidate:
+                continue
+            subject, tail = candidate.groups()
+            subject = subject.capitalize()
         # Ignore row numbers before the subject. Read only the grade column afterwards.
-        tail = text.split(normalize(subject), 1)[1]
         word = next((w for w in GRADE_WORDS if re.search(r'(?<!\w)' + w + r'(?!\w)', tail)), None)
         digits = re.findall(r'(?<!\w)([2-5])(?!\w)', tail)
         unique = set(digits)
         if not word and not digits:
-            continue
+            if (line.get('page', 1) not in table_pages or tail.strip(' .|:—-')):
+                continue
         grade = GRADE_WORDS[word] if word else int(digits[0]) if len(unique) == 1 else None
         conflict = bool(len(unique) > 1 or (word and any(int(d) != grade for d in digits)))
-        result.append({'subject': subject, 'grade': grade,
-                       'confidence': round(line.get('confidence', 0), 3),
+        result.append({'subject': subject, 'grade': None if conflict else grade,
+                       'confidence': round(min(line.get('confidence', 0),
+                                               1 if known_subject else .5), 3),
+                       'known_subject': known_subject,
                        'source': line['text'], 'conflict': conflict})
     return result
 
 
 def classify(text):
     text = normalize(text)
+    # Dative on an appendix and one common OCR substitution on patterned paper.
+    text = re.sub(r'\bат[тг]естат(?:у|а|ы)?\b', 'аттестат', text)
     patterns = {
-        'certificate_9': r'аттестат.{0,60}об основном общем образовании',
-        'certificate_11': r'аттестат.{0,60}о среднем (?:\(полном\) )?общем образовании',
+        'certificate_9': r'аттестат.{0,100}об основном общем(?: образовании)?',
+        'certificate_11': r'аттестат.{0,100}о среднем (?:\(полном\) )?общем(?: образовании)?',
         'diploma_spo': r'диплом.{0,60}(?:о среднем профессиональном образовании|квалифицированного рабочего|специалиста среднего звена)',
         'diploma_bachelor': r'диплом\s+(?:с отличием\s+)?бакалавра',
         'diploma_specialist': r'диплом\s+(?:с отличием\s+)?специалиста(?! среднего)',
@@ -100,7 +127,8 @@ def classify(text):
     if matches:
         # The first title is more relevant than a mention of a previous qualification.
         return min(matches)[1]
-    if 'аттестат' in text or 'диплом' in text or 'итоговые оценки' in text:
+    if ('аттестат' in text or 'диплом' in text or 'итоговые оценки' in text
+            or re.search(r'наименование учебных предметов|итоговая отмет', text)):
         return 'education_unknown'
     return 'unknown'
 
@@ -230,11 +258,16 @@ def interpret_lines(lines, requested_type='auto'):
         warnings.append('Баллы укажите вручную по правилам приёма вашего учебного заведения.')
     if any(row['conflict'] for row in grades):
         warnings.append('Неоднозначные оценки выделены. Сверьте их со сканом.')
+    if any(not row['known_subject'] for row in grades):
+        warnings.append('Найдены предметы вне справочника. Их названия выделены для проверки.')
+    if any(row['grade'] is None for row in grades):
+        warnings.append('В таблице есть строки без надёжной оценки. Заполните их для расчёта среднего балла.')
     names = [normalize(row['subject']) for row in grades]
     duplicates = len(names) != len(set(names))
     if duplicates:
         warnings.append('Повторяются предметы. Удалите дубликаты для расчёта среднего балла.')
-    valid = grades and all(isinstance(row['grade'], int) for row in grades) and not duplicates
+    valid = grades and all(isinstance(row['grade'], int) and not row['conflict']
+                           for row in grades) and not duplicates
     return {'type': kind, 'detected_type': detected_type, 'text': text, 'grades': grades,
             'average': mean_grade(grades) if valid and kind in CERTIFICATE_TYPES else None,
             **identifiers, 'achievement': text[:300] if kind == 'achievement' else '',

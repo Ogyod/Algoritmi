@@ -157,3 +157,8 @@ test("CSV escapes formulas and quotes, and has the new metadata columns", () => 
   assert.match(csv, /"'=2\+2"/);
   assert.doesNotMatch(csv, /Адрес/);
 });
+
+test('a conflicting OCR grade cannot be reviewed until corrected', () => {
+  assert.equal(meanGrade([{subject: 'Музыка', grade: 5, conflict: true}]), null);
+  assert.equal(meanGrade([{subject: 'Музыка', grade: 5, conflict: false}]), 5);
+});

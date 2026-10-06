@@ -3,7 +3,7 @@ from pathlib import Path
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import (DOCUMENT_TYPES, classify, extract_grades, extract_identifiers,
-                  mean_grade, group_lines, interpret_lines)
+                  mean_grade, group_lines, interpret_lines, SUBJECT_CATALOG)
 
 
 def lines(*values, page=1):
@@ -11,6 +11,79 @@ def lines(*values, page=1):
 
 
 class ExtractionTests(unittest.TestCase):
+    def test_tall_noise_box_does_not_merge_distinct_grade_rows(self):
+        blocks = [{'text': 'Шум', 'x': .05, 'y': .05, 'height': .3, 'confidence': .2}]
+        for index, subject in enumerate(['Математика', 'Информатика', 'История', 'География']):
+            y = .14 + index * .04
+            blocks.extend([{'text': subject, 'x': .2, 'y': y, 'height': .02, 'confidence': .9},
+                           {'text': '5 (отлично)', 'x': .8, 'y': y, 'height': .02, 'confidence': .9}])
+        grades = extract_grades(group_lines(blocks))
+        self.assertEqual([g['subject'] for g in grades],
+                         ['Математика', 'Информатика', 'История', 'География'])
+        self.assertEqual([g['grade'] for g in grades], [5] * 4)
+
+    def test_appendix_and_heading_ocr_substitution(self):
+        for text in ['Приложение к аттестату об основном общем образовании',
+                     'К АТГЕСТАТУ ОБ ОСНОВНОМ ОБЩЕМ\nОБРАЗОВАНИИ']:
+            self.assertEqual(classify(text), 'certificate_9')
+        self.assertEqual(classify('Приложение к аттестату о среднем общем образовании'), 'certificate_11')
+
+    def test_table_without_title_does_not_guess_school_level(self):
+        result = interpret_lines(lines('Наименование учебных предметов Итоговая отметка',
+                                       'Музыка 5 (отлично)', 'ИЗО 5 (отлично)'))
+        self.assertEqual(result['type'], 'education_unknown')
+        self.assertEqual(len(result['grades']), 2)
+
+    def test_missing_subjects_and_abbreviations(self):
+        result = interpret_lines(lines('К аттестату об основном общем образовании',
+            'Музыка 5 (отлично)', 'ИЗО 5 (отлично)', 'ОДНКНР 5 (отлично)',
+            'ОБЖ 5 (отлично)', 'Физическая культура > (отлично)',
+            'История России. Всеобщая история 5 (отлично)'))
+        self.assertEqual(len(result['grades']), 6)
+        self.assertEqual([g['grade'] for g in result['grades']], [5] * 6)
+        self.assertEqual(result['average'], 5.0)
+
+    def test_unknown_subject_is_kept_only_in_grade_table(self):
+        row = 'Основы робототехники 4 (хорошо)'
+        self.assertEqual(extract_grades(lines(row)), [])
+        grades = extract_grades(lines('Наименование учебных предметов', row))
+        self.assertEqual(grades[0]['subject'], 'Основы робототехники')
+        self.assertEqual(grades[0]['grade'], 4)
+        self.assertFalse(grades[0]['known_subject'])
+
+    def test_every_catalog_name_and_alias_extracts_exact_subject(self):
+        labels = set()
+        for name, aliases in SUBJECT_CATALOG.items():
+            for label in [name, *aliases]:
+                with self.subTest(label=label):
+                    self.assertNotIn(label.lower(), labels)
+                    labels.add(label.lower())
+                    row = extract_grades(lines(label + ' 4 (хорошо)'))[0]
+                    self.assertEqual(row['subject'], name)
+                    self.assertEqual(row['grade'], 4)
+
+    def test_distinct_language_subjects_are_preserved(self):
+        result = interpret_lines(lines('Иностранный язык (английский) 5',
+            'Иностранный язык (немецкий) 4', 'Родная литература 5'), 'certificate_9')
+        self.assertEqual([r['subject'] for r in result['grades']],
+            ['Иностранный язык (английский)', 'Иностранный язык (немецкий)', 'Родная литература'])
+        self.assertEqual(result['average'], 4.67)
+
+    def test_unreadable_grade_is_kept_and_blocks_mean(self):
+        result = interpret_lines(lines('Наименование учебных предметов',
+            'Русский язык 5', 'Музыка —'), 'certificate_9')
+        self.assertEqual(len(result['grades']), 2)
+        self.assertIsNone(result['grades'][1]['grade'])
+        self.assertIsNone(result['average'])
+
+    def test_conflicting_grade_blocks_mean(self):
+        result = interpret_lines(lines('Музыка 5 (хорошо)'), 'certificate_9')
+        self.assertIsNone(result['grades'][0]['grade'])
+        self.assertIsNone(result['average'])
+
+    def test_subject_abbreviation_is_a_word_not_a_substring(self):
+        self.assertEqual(extract_grades(lines('Горизонт 5', 'Обжиг 5')), [])
+
     def test_all_education_categories(self):
         titles = {
             'certificate_9': 'Аттестат об основном общем образовании',
@@ -38,7 +111,7 @@ class ExtractionTests(unittest.TestCase):
     def test_words_digits_and_conflict(self):
         rows = extract_grades(lines('Алгебра 5 (отлично)', 'История хорошо',
                                     'Химия неудовлетворительно', 'Биология 5 (хорошо)'))
-        self.assertEqual([row['grade'] for row in rows], [5, 4, 2, 4])
+        self.assertEqual([row['grade'] for row in rows], [5, 4, 2, None])
         self.assertTrue(rows[-1]['conflict'])
 
     def test_row_number_is_not_grade(self):
