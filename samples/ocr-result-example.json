@@ -1,0 +1,130 @@
+{
+  "type": "certificate_9",
+  "detected_type": "certificate_9",
+  "text": "УЧЕБНЫЙ ОБРАЗЕЦ — НЕ ОФИЦИАЛЬНЫЙ ДОКУМЕНТ\nАТТЕСТАТ ОБ ОСНОВНОМ ОБЩЕМ ОБРАЗОВАНИИ\nСерия АБ\nНомер 0012345\nРегистрационный номер 54321\nИтоговые  оценки\nРусский язык            5 (отлично)\nЛитература               4 (хорошо)\nАлгебра                    5 (отлично)\nГеометрия                4 (хорошо)\nИстория                    5 (отлично)\nБиология                        4 (хорошо)",
+  "grades": [
+    {
+      "subject": "Русский язык",
+      "grade": 5,
+      "confidence": 0.96,
+      "source": "Русский язык            5 (отлично)",
+      "conflict": false
+    },
+    {
+      "subject": "Литература",
+      "grade": 4,
+      "confidence": 0.96,
+      "source": "Литература               4 (хорошо)",
+      "conflict": false
+    },
+    {
+      "subject": "Алгебра",
+      "grade": 5,
+      "confidence": 0.96,
+      "source": "Алгебра                    5 (отлично)",
+      "conflict": false
+    },
+    {
+      "subject": "Геометрия",
+      "grade": 4,
+      "confidence": 0.96,
+      "source": "Геометрия                4 (хорошо)",
+      "conflict": false
+    },
+    {
+      "subject": "История",
+      "grade": 5,
+      "confidence": 0.96,
+      "source": "История                    5 (отлично)",
+      "conflict": false
+    },
+    {
+      "subject": "Биология",
+      "grade": 4,
+      "confidence": 0.96,
+      "source": "Биология                        4 (хорошо)",
+      "conflict": false
+    }
+  ],
+  "average": 4.5,
+  "document_series": "АБ",
+  "document_number": "0012345",
+  "series_not_present": false,
+  "identifier_candidates": [
+    {
+      "series": "АБ",
+      "number": "0012345",
+      "source": "Серия АБ / Номер 0012345",
+      "page": 1,
+      "confidence": 0.96,
+      "method": "labelled_series_and_number"
+    }
+  ],
+  "achievement": "",
+  "points": null,
+  "warnings": [],
+  "reviewed": false,
+  "ocr_lines": [
+    {
+      "text": "УЧЕБНЫЙ ОБРАЗЕЦ — НЕ ОФИЦИАЛЬНЫЙ ДОКУМЕНТ",
+      "confidence": 0.95,
+      "page": 1
+    },
+    {
+      "text": "АТТЕСТАТ ОБ ОСНОВНОМ ОБЩЕМ ОБРАЗОВАНИИ",
+      "confidence": 0.95,
+      "page": 1
+    },
+    {
+      "text": "Серия АБ",
+      "confidence": 0.96,
+      "page": 1
+    },
+    {
+      "text": "Номер 0012345",
+      "confidence": 0.96,
+      "page": 1
+    },
+    {
+      "text": "Регистрационный номер 54321",
+      "confidence": 0.96,
+      "page": 1
+    },
+    {
+      "text": "Итоговые  оценки",
+      "confidence": 0.96,
+      "page": 1
+    },
+    {
+      "text": "Русский язык            5 (отлично)",
+      "confidence": 0.96,
+      "page": 1
+    },
+    {
+      "text": "Литература               4 (хорошо)",
+      "confidence": 0.96,
+      "page": 1
+    },
+    {
+      "text": "Алгебра                    5 (отлично)",
+      "confidence": 0.96,
+      "page": 1
+    },
+    {
+      "text": "Геометрия                4 (хорошо)",
+      "confidence": 0.96,
+      "page": 1
+    },
+    {
+      "text": "История                    5 (отлично)",
+      "confidence": 0.96,
+      "page": 1
+    },
+    {
+      "text": "Биология                        4 (хорошо)",
+      "confidence": 0.96,
+      "page": 1
+    }
+  ],
+  "engine": "Tesseract.js"
+}

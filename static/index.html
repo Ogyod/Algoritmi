@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Приём · Обработка документов</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Приём — главная"
+        ><span class="brand-mark">П</span>приём<span
+          class="brand-divider"
+        ></span
+        ><span class="brand-caption">Документы абитуриента</span></a
+      ><span class="local-label"
+        ><span class="local-dot"></span>Локальное рабочее место</span
+      >
+    </header>
+    <main>
+      <div class="heading">
+        <div>
+          <span class="eyebrow">ПРИЁМНАЯ КОМИССИЯ</span>
+          <h1>От скана к данным</h1>
+          <p>
+            Загрузите документы, проверьте распознанные сведения и сохраните
+            результат.
+          </p>
+        </div>
+        <button id="demo" class="button secondary">Посмотреть пример</button>
+      </div>
+      <div class="workflow">
+        <span class="step current"><b>1</b> Загрузка</span
+        ><span class="step"><b>2</b> Распознавание</span
+        ><span class="step"><b>3</b> Проверка и выгрузка</span
+        ><span id="engine" class="engine">Проверяем распознавание…</span>
+      </div>
+      <div class="workspace">
+        <aside class="panel upload-panel">
+          <div class="panel-title">
+            <h2>Пакет документов</h2>
+            <span id="file-count" class="count">0</span>
+          </div>
+          <label class="field-label" for="applicant-id"
+            >ID абитуриента <span>необязательно</span></label
+          ><input
+            id="applicant-id"
+            placeholder="Например, 4515"
+            maxlength="100"
+            autocomplete="off"
+          />
+          <div class="dropzone" id="dropzone">
+            <svg
+              width="34"
+              height="34"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <path d="M12 16V4m-4 4 4-4 4 4M4 15v5h16v-5" /></svg
+            ><strong>Перетащите сканы</strong><span>или выберите файлы</span
+            ><button class="button secondary small" id="choose">
+              Выбрать файлы</button
+            ><input
+              type="file"
+              id="files"
+              accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.webp"
+              multiple
+              hidden
+            /><small
+              >PDF, JPG, PNG, TIFF, WEBP<br />До 20 МБ на файл · до 20
+              страниц</small
+            >
+          </div>
+          <div id="queue" class="queue" aria-label="Загруженные файлы"></div>
+          <button id="process" class="button primary full" disabled>
+            Распознать документы
+          </button>
+          <div class="privacy-note">
+            <svg
+              width="17"
+              height="17"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Z" /></svg
+            ><span
+              >Файлы обрабатываются на этом компьютере. Данные не отправляются
+              на сайт.</span
+            >
+          </div>
+        </aside>
+        <section class="panel scan-panel">
+          <div class="panel-title">
+            <h2>Исходный документ</h2>
+            <span id="scan-type" class="muted">Нет файла</span>
+          </div>
+          <div class="scan-tools">
+            <span id="scan-name">Предпросмотр скана</span>
+            <div>
+              <button
+                id="prev-page"
+                class="icon-button"
+                aria-label="Предыдущая страница"
+                disabled
+              >
+                ‹</button
+              ><span id="page-count">—</span
+              ><button
+                id="next-page"
+                class="icon-button"
+                aria-label="Следующая страница"
+                disabled
+              >
+                ›
+              </button>
+            </div>
+          </div>
+          <div id="preview" class="preview">
+            <div class="empty-state">
+              <div class="document-icon">
+                <svg
+                  width="48"
+                  height="58"
+                  viewBox="0 0 48 58"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  aria-hidden="true"
+                >
+                  <path d="M10 3h19l10 10v42H10V3Z" />
+                  <path d="M29 3v11h10M17 25h15M17 33h15M17 41h10" />
+                </svg>
+              </div>
+              <h3>Ваш документ появится здесь</h3>
+              <p>
+                Выберите файл из пакета,<br />чтобы сверить его с результатом.
+              </p>
+            </div>
+          </div>
+          <div class="scan-footer">
+            <span id="scan-hint">Оригинал всегда рядом с данными</span
+            ><button id="open-original" class="text-button" disabled>
+              Открыть оригинал
+            </button>
+          </div>
+        </section>
+        <section class="panel results-panel">
+          <div class="panel-title">
+            <h2>Результат обработки</h2>
+            <span id="review-state" class="badge neutral"
+              >Ожидает загрузки</span
+            >
+          </div>
+          <div class="tabs" role="tablist" aria-label="Результаты">
+            <button
+              role="tab"
+              id="tab-data"
+              aria-selected="true"
+              aria-controls="result-content"
+              class="tab active"
+            >
+              Данные</button
+            ><button
+              role="tab"
+              id="tab-text"
+              aria-selected="false"
+              aria-controls="result-content"
+              class="tab"
+            >
+              Распознанный текст
+            </button>
+          </div>
+          <div id="result-content" role="tabpanel">
+            <div class="result-empty">
+              <span class="result-symbol">≡</span>
+              <h3>Сначала загрузите сканы</h3>
+              <p>
+                Здесь будут серия и номер документа, а для аттестатов — оценки и
+                средний балл.
+              </p>
+              <div class="supported">
+                <span>9 классов</span><span>11 классов</span
+                ><span>Дипломы</span>
+              </div>
+            </div>
+          </div>
+          <div id="review-actions" class="review-actions" hidden>
+            <button id="confirm" class="button secondary full">
+              Подтвердить проверку документа
+            </button>
+          </div>
+        </section>
+      </div>
+      <section class="packet-summary">
+        <div>
+          <span class="eyebrow">ИТОГ ПАКЕТА</span>
+          <h2>Готово к выгрузке</h2>
+          <p id="summary-hint">
+            Результаты появятся после распознавания документов.
+          </p>
+        </div>
+        <div class="summary-stat">
+          <span>Средний балл аттестата</span
+          ><strong id="summary-average">—</strong>
+        </div>
+        <div class="summary-stat">
+          <span>Баллы за достижения</span><strong id="summary-points">—</strong>
+        </div>
+        <div class="export-actions">
+          <button id="export-json" class="button primary" disabled>
+            Скачать JSON</button
+          ><button id="export-csv" class="button secondary" disabled>
+            CSV
+          </button>
+        </div>
+      </section>
+      <footer>
+        Приём · Независимый модуль обработки сканов<span
+          >Проверка человеком перед переносом в профиль</span
+        >
+      </footer>
+    </main>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

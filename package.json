@@ -1,0 +1,13 @@
+{
+  "name": "admissions-document-processor",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Локальная обработка сканов абитуриентов",
+  "dependencies": {
+    "tesseract.js": "7.0.0"
+  },
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/test_domain.mjs"
+  }
+}

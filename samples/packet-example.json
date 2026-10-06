@@ -1,0 +1,108 @@
+{
+  "schema_version": "2.0",
+  "applicant_id": null,
+  "review_status": "reviewed",
+  "average_grade": 4.5,
+  "grade_count": 6,
+  "achievement_points": null,
+  "warnings": [],
+  "documents": [
+    {
+      "file_name": "certificate_9.png",
+      "status": "done",
+      "error": null,
+      "type": "certificate_9",
+      "reviewed": true,
+      "document_series": "АБ",
+      "document_number": "0012345",
+      "series_not_present": false,
+      "identifier_candidates": [
+        {
+          "series": "АБ",
+          "number": "0012345",
+          "source": "Серия АБ / Номер 0012345",
+          "page": 1,
+          "confidence": 0.96,
+          "method": "labelled_series_and_number"
+        }
+      ],
+      "grades": [
+        {
+          "subject": "Русский язык",
+          "grade": 5,
+          "confidence": 0.96,
+          "source": "Русский язык            5 (отлично)",
+          "conflict": false
+        },
+        {
+          "subject": "Литература",
+          "grade": 4,
+          "confidence": 0.96,
+          "source": "Литература               4 (хорошо)",
+          "conflict": false
+        },
+        {
+          "subject": "Алгебра",
+          "grade": 5,
+          "confidence": 0.96,
+          "source": "Алгебра                    5 (отлично)",
+          "conflict": false
+        },
+        {
+          "subject": "Геометрия",
+          "grade": 4,
+          "confidence": 0.96,
+          "source": "Геометрия                4 (хорошо)",
+          "conflict": false
+        },
+        {
+          "subject": "История",
+          "grade": 5,
+          "confidence": 0.96,
+          "source": "История                    5 (отлично)",
+          "conflict": false
+        },
+        {
+          "subject": "Биология",
+          "grade": 4,
+          "confidence": 0.96,
+          "source": "Биология                        4 (хорошо)",
+          "conflict": false
+        }
+      ],
+      "average_grade": 4.5,
+      "achievement": null,
+      "points": null,
+      "recognized_text": "УЧЕБНЫЙ ОБРАЗЕЦ — НЕ ОФИЦИАЛЬНЫЙ ДОКУМЕНТ\nАТТЕСТАТ ОБ ОСНОВНОМ ОБЩЕМ ОБРАЗОВАНИИ\nСерия АБ\nНомер 0012345\nРегистрационный номер 54321\nИтоговые  оценки\nРусский язык            5 (отлично)\nЛитература               4 (хорошо)\nАлгебра                    5 (отлично)\nГеометрия                4 (хорошо)\nИстория                    5 (отлично)\nБиология                        4 (хорошо)",
+      "warnings": []
+    },
+    {
+      "file_name": "diploma_bachelor.png",
+      "status": "done",
+      "error": null,
+      "type": "diploma_bachelor",
+      "reviewed": true,
+      "document_series": "107724",
+      "document_number": "0012345",
+      "series_not_present": false,
+      "identifier_candidates": [
+        {
+          "series": "107724",
+          "number": "0012345",
+          "source": "Серия 107724 / Номер 0012345",
+          "page": 1,
+          "confidence": 0.96,
+          "method": "labelled_series_and_number"
+        }
+      ],
+      "grades": [],
+      "average_grade": null,
+      "achievement": null,
+      "points": null,
+      "recognized_text": "УЧЕБНЫЙ ОБРАЗЕЦ — НЕ ОФИЦИАЛЬНЫЙ ДОКУМЕНТ\nДИПЛОМ БАКАЛАВРА\nСерия 107724\nНомер 0012345\nРегистрационный номер 54321",
+      "warnings": []
+    }
+  ],
+  "exported_at": "2026-10-06T18:57:11.276Z",
+  "demo": false
+}
