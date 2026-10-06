@@ -11,6 +11,15 @@ def lines(*values, page=1):
 
 
 class ExtractionTests(unittest.TestCase):
+    def test_latin_lookalikes_in_education_heading(self):
+        for heading, kind in [('К АТГЕСТАТУ ОБ OCHOBHOM ОБЩЕМ ОБРАЗОВАНИИ', 'certificate_9'),
+                              ('К ATTECTATУ O CPEДHEM OБЩEM OБPAЗOBAHИИ', 'certificate_11')]:
+            with self.subTest(heading=heading):
+                result = interpret_lines(lines(heading, 'Музыка 5 (отлично)'))
+                self.assertEqual(result['type'], kind)
+                self.assertEqual(result['average'], 5.0)
+                self.assertIn(heading, result['text'])
+
     def test_tall_noise_box_does_not_merge_distinct_grade_rows(self):
         blocks = [{'text': 'Шум', 'x': .05, 'y': .05, 'height': .3, 'confidence': .2}]
         for index, subject in enumerate(['Математика', 'Информатика', 'История', 'География']):

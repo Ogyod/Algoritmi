@@ -1,6 +1,10 @@
 // The same OCR passes run in Node and in the browser.
+function titleText(text) {
+  const latin = "ABCEHKMOPTXYabcehkmoptxy", russian = "АВСЕНКМОРТХУавсенкмортху";
+  return text.replace(/[ABCEHKMOPTXYabcehkmoptxy]/g, (letter) => russian[latin.indexOf(letter)]);
+}
 export function headingPresent(text) {
-  return /ат[тг]естат[ау]?[^\n]{0,100}(?:основн|средн)|диплом[^\n]{0,100}(?:бакалавр|специалист|магистр|аспиран|профессионал)/iu.test(text);
+  return /ат[тг]естат[ау]?[^\n]{0,100}(?:основн|средн)|диплом[^\n]{0,100}(?:бакалавр|специалист|магистр|аспиран|профессионал)/iu.test(titleText(text));
 }
 
 function blocksFrom(data, width, height) {
@@ -30,7 +34,7 @@ export async function recognizePage(worker, image, width, height, enhancedImage)
                   width: Math.floor(width * .8), height: Math.floor(height * .36)},
     }, {text: true, blocks: true});
     const extra = blocksFrom(heading, width, height).filter((line) =>
-      /ат[тг]естат|диплом|основно|средн|образован|бакалавр|магистр|специалист|аспиран/iu.test(line.text));
+      /ат[тг]естат|диплом|основно|средн|образован|бакалавр|магистр|специалист|аспиран/iu.test(titleText(line.text)));
     for (const line of extra) {
       if (!blocks.some((old) => old.text === line.text && Math.abs(old.y - line.y) < .02))
         blocks.push(line);

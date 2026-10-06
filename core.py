@@ -106,7 +106,10 @@ def extract_grades(lines):
 
 
 def classify(text):
-    text = normalize(text)
+    # Bilingual OCR can read Russian capitals as visually identical Latin
+    # letters (ОСНОВНОМ -> OCHOBHOM). Normalize titles only; retain raw evidence.
+    text = normalize(text.translate(str.maketrans(
+        'ABCEHKMOPTXYabcehkmoptxy', 'АВСЕНКМОРТХУавсенкмортху')))
     # Dative on an appendix and one common OCR substitution on patterned paper.
     text = re.sub(r'\bат[тг]естат(?:у|а|ы)?\b', 'аттестат', text)
     patterns = {

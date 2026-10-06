@@ -168,11 +168,12 @@ function educationalFields(result) {
 }
 
 function gradeTable(result) {
+  const categoryPending = result.type === "education_unknown";
   const sum = result.grades.reduce(
     (n, row) => n + (Number.isFinite(row.grade) ? row.grade : 0),
     0,
   );
-  return `<div class="average-card"><div><span>Средний балл этого аттестата</span><small id="grade-formula">${result.grades.length ? `${sum} ÷ ${result.grades.length} предметов` : "Нужно приложение с оценками"}</small></div><strong id="doc-average">${format(meanGrade(result.grades))}</strong></div>
+  return `<div class="average-card"><div><span>${categoryPending ? "Найденные оценки" : "Средний балл этого аттестата"}</span><small id="grade-formula">${categoryPending ? "Выберите категорию аттестата для расчёта среднего балла" : result.grades.length ? `${sum} ÷ ${result.grades.length} предметов` : "Нужно приложение с оценками"}</small></div><strong id="doc-average">${format(categoryPending ? null : meanGrade(result.grades))}</strong></div>
     <table class="grade-table"><thead><tr><th>Предмет</th><th>Оценка</th><th></th></tr></thead><tbody>
     ${result.grades
       .map(
@@ -235,8 +236,8 @@ function renderResults() {
   html += result.warnings
     .map((message) => `<div class="notice">${escapeHTML(message)}</div>`)
     .join("");
-  if (isEducation(result.type)) html += educationalFields(result);
-  if (isCertificate(result.type)) html += gradeTable(result);
+  if (isEducation(result.type) || result.type === "education_unknown") html += educationalFields(result);
+  if (isCertificate(result.type) || (result.type === "education_unknown" && result.grades.length)) html += gradeTable(result);
   if (result.type === "achievement")
     html += `<label for="achievement" class="result-label">Подтверждённое достижение</label><textarea id="achievement" rows="4">${escapeHTML(result.achievement)}</textarea><label for="points" class="result-label">Баллы по правилам приёма</label><input id="points" type="number" min="0" step="0.01" placeholder="Не начислены" value="${result.points ?? ""}">`;
   $("result-content").innerHTML = html;
@@ -345,7 +346,7 @@ async function changeCategory(file, kind) {
     // Reuse OCR text and previews; do not recognize the same scan again.
     result.pages = previous.pages;
     result.engine = previous.engine;
-    if (isEducation(previous.type) && isEducation(result.type)) {
+    if ((isEducation(previous.type) || previous.type === "education_unknown") && isEducation(result.type)) {
       for (const field of [
         "document_series",
         "document_number",
@@ -353,7 +354,7 @@ async function changeCategory(file, kind) {
       ])
         result[field] = previous[field];
     }
-    if (isCertificate(previous.type) && isCertificate(result.type))
+    if ((isCertificate(previous.type) || previous.type === "education_unknown") && isCertificate(result.type))
       result.grades = previous.grades;
     if (previous.type === "achievement" && result.type === "achievement") {
       result.achievement = previous.achievement;

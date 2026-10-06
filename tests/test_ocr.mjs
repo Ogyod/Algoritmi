@@ -16,6 +16,14 @@ test("heading recognises inflection and a common OCR error", () => {
   assert.ok(headingPresent("Диплом бакалавра"));
   assert.ok(!headingPresent("Наименование учебных предметов"));
 });
+test("heading recognises Latin lookalikes without another OCR pass", async () => {
+  const text = "К АТГЕСТАТУ ОБ OCHOBHOM ОБЩЕМ";
+  assert.ok(headingPresent(text));
+  const w = worker(data([text]));
+  const rows = await recognizePage(w, "original", 1000, 1400, () => "enhanced");
+  assert.equal(w.calls, 1);
+  assert.equal(rows[0].text, text);
+});
 test("sparse noisy title gets a bounded second pass", async () => {
   const w = worker(data(["00000000123456", "АБ ? =", ...Array(20).fill("< a. = >")]),
     data(["К АТГЕСТАТУ ОБ ОСНОВНОМ ОБЩЕМ", "ОБРАЗОВАНИИ", "Музыка 5", "99999999999999"]));
