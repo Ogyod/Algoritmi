@@ -177,40 +177,44 @@ class Handler(BaseHTTPRequestHandler):
         if processing and not OCR_LOCK.acquire(blocking=False):
             return self.send(429, {'error': 'Другой документ уже обрабатывается. Повторите позже.'})
         try:
-            length = int(self.headers.get('Content-Length', '0'))
-            if not 0 < length <= MAX_BODY:
-                return self.send(413, {'error': 'Файл слишком большой. Максимум — 20 МБ.'})
-            if 'application/json' not in self.headers.get('Content-Type', ''):
-                return self.send(415, {'error': 'Ожидается JSON.'})
-            body = json.loads(self.rfile.read(length))
-            if self.path == '/api/reinterpret':
-                lines = body.get('lines') if isinstance(body, dict) else None
-                if not isinstance(lines, list) or len(lines) > 5000:
-                    raise ValueError('Некорректный распознанный текст.')
-                for line in lines:
-                    if (not isinstance(line, dict) or not isinstance(line.get('text'), str)
-                            or len(line['text']) > 5000
-                            or not isinstance(line.get('page'), int)
-                            or not isinstance(line.get('confidence'), (float, int))
-                            or not 0 <= line['confidence'] <= 1):
-                        raise ValueError('Некорректная строка распознанного текста.')
-                return self.send(200, interpret_lines(lines, body.get('type', 'auto')))
-            if not isinstance(body, dict) or not isinstance(body.get('data'), str):
-                raise ValueError('Не переданы данные файла.')
-            data = base64.b64decode(body['data'], validate=True)
-            result = process(data, body.get('type', 'auto'))
-            self.send(200, result)
+            status, result = self.read_request()
         except (binascii.Error, json.JSONDecodeError):
-            self.send(422, {'error': 'Некорректные данные файла или запроса.'})
+            status, result = 422, {'error': 'Некорректные данные файла или запроса.'}
         except subprocess.TimeoutExpired:
-            self.send(422, {'error': 'Распознавание заняло слишком много времени. Загрузите файл меньшего размера.'})
+            status, result = 422, {'error': 'Распознавание заняло слишком много времени. Загрузите файл меньшего размера.'}
         except ValueError as exc:
-            self.send(422, {'error': str(exc)})
+            status, result = 422, {'error': str(exc)}
         except Exception:
-            self.send(500, {'error': 'Не удалось обработать файл. Попробуйте другой скан.'})
+            status, result = 500, {'error': 'Не удалось обработать файл. Попробуйте другой скан.'}
         finally:
             if processing:
                 OCR_LOCK.release()
+        # A completed response must allow the next request immediately.
+        self.send(status, result)
+
+    def read_request(self):
+        length = int(self.headers.get('Content-Length', '0'))
+        if not 0 < length <= MAX_BODY:
+            return 413, {'error': 'Файл слишком большой. Максимум — 20 МБ.'}
+        if 'application/json' not in self.headers.get('Content-Type', ''):
+            return 415, {'error': 'Ожидается JSON.'}
+        body = json.loads(self.rfile.read(length))
+        if self.path == '/api/reinterpret':
+            lines = body.get('lines') if isinstance(body, dict) else None
+            if not isinstance(lines, list) or len(lines) > 5000:
+                raise ValueError('Некорректный распознанный текст.')
+            for line in lines:
+                if (not isinstance(line, dict) or not isinstance(line.get('text'), str)
+                        or len(line['text']) > 5000
+                        or not isinstance(line.get('page'), int)
+                        or not isinstance(line.get('confidence'), (float, int))
+                        or not 0 <= line['confidence'] <= 1):
+                    raise ValueError('Некорректная строка распознанного текста.')
+            return 200, interpret_lines(lines, body.get('type', 'auto'))
+        if not isinstance(body, dict) or not isinstance(body.get('data'), str):
+            raise ValueError('Не переданы данные файла.')
+        data = base64.b64decode(body['data'], validate=True)
+        return 200, process(data, body.get('type', 'auto'))
 
 def make_server(port=8765):
     return ThreadingHTTPServer(('127.0.0.1', port), Handler)
