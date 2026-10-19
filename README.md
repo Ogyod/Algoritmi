@@ -1,4 +1,4 @@
-Для запуска на ПК нужно зайти в папку со скаченным репозиторием и вставить команду ".\.venv\Scripts\python.exe -X utf8 server.py --open"
+Для запуска на ПК нужно зайти в папку со скаченным репозиторием и вставить команду "\.venv\Scripts\python.exe -X utf8 server.py --open"
 
 Для обновления Репозитория на Пк нужно один раз самый первый подключить обновление "git remote add upstream https://github.com/Ogyod/Algoritmi.git"
 
