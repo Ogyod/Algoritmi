@@ -40,7 +40,7 @@ def engine():
 
 def recognize(images):
     if not engine():
-        raise ValueError('OCR не настроен. Запустите start.command или установите зависимости по README.')
+        raise ValueError('OCR не настроен. Запустите start.command или установите зависимости проекта.')
     node, env, _ = node_environment()
     # One worker per document, reused for every page. No model downloads during OCR.
     result = subprocess.run(
