@@ -4,5 +4,5 @@
 
 После этого, загрузи новую версию Репозитория в эту же папку "git pull --ff-only upstream main"
 
-Обнови зависимости и запусти приложение ".\.venv\Scripts\python.exe -m pip install -r requirements.txt" и "npm.cmd install --ignore-scripts" Запуск осуществляется командой, указанной в начале
+Обнови зависимости и запусти приложение "\.venv\Scripts\python.exe -m pip install -r requirements.txt" и "npm.cmd install --ignore-scripts" Запуск осуществляется командой, указанной в начале
 
