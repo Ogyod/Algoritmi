@@ -82,22 +82,24 @@ def extract_grades(lines):
             # Do not extract names or random numbers from the title page.
             candidate = re.fullmatch(
                 r'(?:\d+[.)]?\s+)?([а-я][а-я ()/.,-]{2,100}?)\s+'
-                r'([2-5](?:\s*\([^)]*\))?|\(?отлично\)?|\(?хорошо\)?|'
+                r'([0-9](?:\s*\([^)]*\))?|\(?отлично\)?|\(?хорошо\)?|'
                 r'\(?удовлетворительно\)?|\(?неудовлетворительно\)?)[ .|]*', text)
             if line.get('page', 1) not in table_pages or not candidate:
                 continue
             subject, tail = candidate.groups()
             subject = subject.capitalize()
         # Ignore row numbers before the subject. Read only the grade column afterwards.
-        word = next((w for w in GRADE_WORDS if re.search(r'(?<!\w)' + w + r'(?!\w)', tail)), None)
-        digits = re.findall(r'(?<!\w)([2-5])(?!\w)', tail)
-        unique = set(digits)
-        if not word and not digits:
-            if (line.get('page', 1) not in table_pages or tail.strip(' .|:—-')):
-                continue
-        grade = GRADE_WORDS[word] if word else int(digits[0]) if len(unique) == 1 else None
-        conflict = bool(len(unique) > 1 or (word and any(int(d) != grade for d in digits)))
-        result.append({'subject': subject, 'grade': None if conflict else grade,
+        values = {value for word, value in GRADE_WORDS.items()
+                  if re.search(r'(?<!\w)' + word + r'(?!\w)', tail)}
+        digits = re.findall(r'(?<!\w)\d+(?!\w)', tail)
+        values.update(int(digit) for digit in digits if digit in {'2', '3', '4', '5'})
+        # Keep an unreadable grade on a table page: dropping the subject would
+        # silently calculate an average from an incomplete list.
+        if not values and line.get('page', 1) not in table_pages:
+            continue
+        conflict = len(values) > 1 or any(digit not in {'2', '3', '4', '5'} for digit in digits)
+        grade = next(iter(values)) if len(values) == 1 and not conflict else None
+        result.append({'subject': subject, 'grade': grade,
                        'confidence': round(min(line.get('confidence', 0),
                                                1 if known_subject else .5), 3),
                        'known_subject': known_subject,
@@ -244,7 +246,7 @@ def interpret_lines(lines, requested_type='auto'):
     educational = kind in EDUCATION_TYPES or kind == 'education_unknown'
     # Keep candidate grades when the subtype is unknown, so category correction
     # in the interface does not require another OCR pass.
-    grades = extract_grades(lines) if educational else []
+    grades = extract_grades(lines) if kind in CERTIFICATE_TYPES or kind == 'education_unknown' else []
     identifiers = {'document_series': '', 'document_number': '',
                    'series_not_present': False, 'identifier_candidates': []}
     warnings = []

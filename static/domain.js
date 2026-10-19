@@ -19,7 +19,8 @@ export const TYPE_LABELS = {
 export const isCertificate = (type) =>
   ["certificate_9", "certificate_11"].includes(type);
 export const isEducation = (type) =>
-  Object.hasOwn(DOCUMENT_TYPES, type) && type !== "achievement";
+  type === "education_unknown" || (Object.hasOwn(DOCUMENT_TYPES, type) && type !== "achievement");
+export const hasGradeTable = (type) => isCertificate(type) || type === "education_unknown";
 export const normalize = (value) =>
   value.trim().toLowerCase().replaceAll("ё", "е").replace(/\s+/g, " ");
 
@@ -93,7 +94,7 @@ export function buildPacket(files, applicantId) {
     };
     const r = file.result;
     if (!r) return base;
-    const grades = isCertificate(r.type) ? r.grades : [];
+    const grades = hasGradeTable(r.type) ? r.grades : [];
     return {
       ...base,
       type: r.type,

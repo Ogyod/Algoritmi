@@ -3,6 +3,7 @@ import {
   TYPE_LABELS,
   isCertificate,
   isEducation,
+  hasGradeTable,
   meanGrade,
   buildPacket,
   packetCSV,
@@ -236,8 +237,8 @@ function renderResults() {
   html += result.warnings
     .map((message) => `<div class="notice">${escapeHTML(message)}</div>`)
     .join("");
-  if (isEducation(result.type) || result.type === "education_unknown") html += educationalFields(result);
-  if (isCertificate(result.type) || (result.type === "education_unknown" && result.grades.length)) html += gradeTable(result);
+  if (isEducation(result.type)) html += educationalFields(result);
+  if (hasGradeTable(result.type) && (isCertificate(result.type) || result.grades.length)) html += gradeTable(result);
   if (result.type === "achievement")
     html += `<label for="achievement" class="result-label">Подтверждённое достижение</label><textarea id="achievement" rows="4">${escapeHTML(result.achievement)}</textarea><label for="points" class="result-label">Баллы по правилам приёма</label><input id="points" type="number" min="0" step="0.01" placeholder="Не начислены" value="${result.points ?? ""}">`;
   $("result-content").innerHTML = html;
@@ -346,7 +347,7 @@ async function changeCategory(file, kind) {
     // Reuse OCR text and previews; do not recognize the same scan again.
     result.pages = previous.pages;
     result.engine = previous.engine;
-    if ((isEducation(previous.type) || previous.type === "education_unknown") && isEducation(result.type)) {
+    if (isEducation(previous.type) && isEducation(result.type)) {
       for (const field of [
         "document_series",
         "document_number",
@@ -354,7 +355,7 @@ async function changeCategory(file, kind) {
       ])
         result[field] = previous[field];
     }
-    if ((isCertificate(previous.type) || previous.type === "education_unknown") && isCertificate(result.type))
+    if (hasGradeTable(previous.type) && hasGradeTable(result.type))
       result.grades = previous.grades;
     if (previous.type === "achievement" && result.type === "achievement") {
       result.achievement = previous.achievement;

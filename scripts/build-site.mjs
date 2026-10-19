@@ -29,18 +29,31 @@ for (const name of ["favicon.svg", "style.css", "app.js"])
 await writeFile(path.join(out, "index.html"), html);
 await writeFile(path.join(out, ".nojekyll"), "");
 for (const [source, dest] of [
-  ["tesseract.js/dist", "tesseract"], ["tesseract.js-core", "tesseract-core"],
-  ["pyodide", "pyodide"], ["pdfjs-dist/build", "pdfjs"],
   ["pdfjs-dist/cmaps", "cmaps"], ["pdfjs-dist/standard_fonts", "standard_fonts"],
   ["pdfjs-dist/wasm", "pdfjs-wasm"],
 ]) await cp(path.join(root, "node_modules", source), path.join(assets, "vendor", dest), {
   recursive: true, dereference: true,
   filter: (name) => path.basename(name) !== "node_modules" && !name.endsWith(".map"),
 });
+// Both OCR entry points use LSTM-only mode. Keep all three browser CPU
+// variants, but omit the unused legacy engines, Node wrappers and duplicate WASM.
+for (const [source, dest, files] of [
+  ["tesseract.js/dist", "tesseract", ["tesseract.min.js", "worker.min.js"]],
+  ["tesseract.js-core", "tesseract-core", ["tesseract-core-lstm.wasm.js",
+    "tesseract-core-simd-lstm.wasm.js", "tesseract-core-relaxedsimd-lstm.wasm.js"]],
+  ["pyodide", "pyodide", ["pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm",
+    "python_stdlib.zip", "pyodide-lock.json"]],
+  ["pdfjs-dist/build", "pdfjs", ["pdf.mjs", "pdf.worker.mjs"]],
+]) {
+  await mkdir(path.join(assets, "vendor", dest), {recursive: true});
+  for (const file of files)
+    await cp(path.join(root, "node_modules", source, file), path.join(assets, "vendor", dest, file));
+}
 for (const [source, dest] of [["utif/UTIF.js", "utif.js"], ["pako/dist/pako.min.js", "pako.js"]])
   await cp(path.join(root, "node_modules", source), path.join(assets, "vendor", dest));
 await mkdir(path.join(assets, "vendor", "licenses"));
 for (const [source, dest] of [["tesseract.js/LICENSE.md", "tesseract.txt"],
+  ["tesseract.js-core/LICENSE", "tesseract-core.txt"],
   ["pdfjs-dist/LICENSE", "pdfjs.txt"], ["utif/LICENSE", "utif.txt"],
   ["pako/LICENSE", "pako.txt"]])
   await cp(path.join(root, "node_modules", source), path.join(assets, "vendor", "licenses", dest));

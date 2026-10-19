@@ -79,11 +79,28 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(result['average'], 4.67)
 
     def test_unreadable_grade_is_kept_and_blocks_mean(self):
-        result = interpret_lines(lines('Наименование учебных предметов',
-            'Русский язык 5', 'Музыка —'), 'certificate_9')
-        self.assertEqual(len(result['grades']), 2)
-        self.assertIsNone(result['grades'][1]['grade'])
+        for unreadable in ['—', '?', 'S', 'неразборчиво', '1', '6', '2025']:
+            with self.subTest(unreadable=unreadable):
+                result = interpret_lines(lines('Наименование учебных предметов',
+                    'Русский язык 5', 'Музыка ' + unreadable), 'certificate_9')
+                self.assertEqual(len(result['grades']), 2)
+                self.assertIsNone(result['grades'][1]['grade'])
+                self.assertIsNone(result['average'])
+
+    def test_conflicting_words_and_invalid_digits_block_mean(self):
+        for text in ['Музыка отлично хорошо', 'Музыка 6 (отлично)', 'Музыка 1 хорошо']:
+            with self.subTest(text=text):
+                result = interpret_lines(lines(text), 'certificate_9')
+                self.assertTrue(result['grades'][0]['conflict'])
+                self.assertIsNone(result['average'])
+        self.assertEqual(extract_grades(lines('Музыка отлично отлично 5'))[0]['grade'], 5)
+
+    def test_diploma_does_not_extract_unused_grades(self):
+        result = interpret_lines(lines('Диплом бакалавра', 'Музыка 5 (хорошо)'))
+        self.assertEqual(result['type'], 'diploma_bachelor')
+        self.assertEqual(result['grades'], [])
         self.assertIsNone(result['average'])
+        self.assertFalse(any('оцен' in warning for warning in result['warnings']))
 
     def test_conflicting_grade_blocks_mean(self):
         result = interpret_lines(lines('Музыка 5 (хорошо)'), 'certificate_9')

@@ -15,6 +15,15 @@ function loadScript(path) {
 
 let parser;
 const pending = new Map();
+function stopParser(message) {
+  for (const request of pending.values()) {
+    clearTimeout(request.timer);
+    request.reject(new Error(message));
+  }
+  pending.clear();
+  parser?.terminate();
+  parser = null;
+}
 export function interpretDocument(payload) {
   if (!parser) {
     parser = new Worker(asset("./parser-worker.js"), {type: "module"});
@@ -23,25 +32,24 @@ export function interpretDocument(payload) {
       if (!request) return;
       clearTimeout(request.timer);
       pending.delete(data.id);
-      data.error ? request.reject(new Error(data.error)) : request.resolve(data.result);
+      if (data.error) {
+        request.reject(new Error(data.error));
+        stopParser(data.error);
+      } else request.resolve(data.result);
     };
     parser.onerror = (event) => {
       console.error("Document parser worker:", event.message);
-      for (const request of pending.values()) {
-        clearTimeout(request.timer);
-        request.reject(new Error("Обработчик остановился. Обновите страницу и повторите загрузку."));
-      }
-      pending.clear(); parser.terminate(); parser = null;
+      stopParser("Обработчик остановился. Повторите обработку документа.");
     };
   }
   return new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
     const timer = setTimeout(() => {
-      pending.delete(id);
-      reject(new Error("Загрузка обработчика заняла слишком много времени. Обновите страницу."));
+      stopParser("Загрузка обработчика заняла слишком много времени. Повторите обработку документа.");
     }, 300000);
     pending.set(id, {resolve, reject, timer});
-    parser.postMessage({id, payload});
+    try {parser.postMessage({id, payload});}
+    catch {stopParser("Не удалось передать данные обработчику. Повторите обработку документа.");}
   });
 }
 

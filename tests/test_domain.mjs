@@ -115,6 +115,21 @@ test("diploma grades are not treated as certificate grades", () => {
   assert.equal(packet.average_grade, null);
   assert.deepEqual(packet.documents[0].grades, []);
 });
+test("unclassified education keeps its data in JSON and CSV without a mean or confirmation", () => {
+  const result = document("education_unknown");
+  const packet = buildPacket([file(result)], "4515");
+  const doc = packet.documents[0];
+  assert.equal(doc.document_series, "АБ");
+  assert.equal(doc.document_number, "0012345");
+  assert.deepEqual(doc.grades, result.grades);
+  assert.equal(doc.average_grade, null);
+  assert.equal(packet.average_grade, null);
+  assert.equal(packet.review_status, "needs_review");
+  assert.equal(doc.reviewed, false);
+  const csv = packetCSV(packet);
+  assert.match(csv, /0012345/);
+  assert.match(csv, /Алгебра/);
+});
 test("achievements require finite nonnegative points without an invented cap", () => {
   assert.equal(
     reviewError(
