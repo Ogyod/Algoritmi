@@ -24,7 +24,7 @@ function stopParser(message) {
   parser?.terminate();
   parser = null;
 }
-export function interpretDocument(payload) {
+function startParser() {
   if (!parser) {
     parser = new Worker(asset("./parser-worker.js"), {type: "module"});
     parser.onmessage = ({data}) => {
@@ -42,6 +42,10 @@ export function interpretDocument(payload) {
       stopParser("Обработчик остановился. Повторите обработку документа.");
     };
   }
+}
+
+export function interpretDocument(payload) {
+  startParser();
   return new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
     const timer = setTimeout(() => {
@@ -161,19 +165,50 @@ export async function processDocument(file, kind, progress = () => {}) {
 }
 
 export async function processDocumentGroup(files, kind, progress = () => {}) {
-  if (!files.length || files.some(file => !file.size || file.size > MAX_BYTES)) throw new Error("Допустимый размер файла — от 1 байта до 20 МБ.");
-  progress("Загрузка распознавания… Первый запуск может занять больше времени.");
-  await loadScript("./vendor/tesseract/tesseract.min.js");
-  const worker = await Tesseract.createWorker(["rus", "eng"], 1, {
-    workerPath: asset("./vendor/tesseract/worker.min.js"),
-    corePath: asset("./vendor/tesseract-core/"), langPath: asset("./models").replace(/\/$/, ""),
-    gzip: false, cacheMethod: "none",
-  });
+  const processor = createDocumentProcessor();
+  try {return await processor.process(files, kind, progress);}
+  finally {await processor.close();}
+}
+
+export function createDocumentProcessor() {
+  let worker;
+  async function close() {
+    const current = worker;
+    worker = undefined;
+    await current?.terminate();
+  }
+  return {
+    async process(files, kind, progress = () => {}) {
+      if (!files.length || files.some(file => !file.size || file.size > MAX_BYTES)) throw new Error("Допустимый размер файла — от 1 байта до 20 МБ.");
+      // Compile the parser while OCR loads its models and reads the first scan.
+      startParser();
+      if (!worker) {
+        progress("Загружаем модели распознавания…");
+        await loadScript("./vendor/tesseract/tesseract.min.js");
+        worker = await Tesseract.createWorker(["rus", "eng"], 1, {
+          workerPath: asset("./vendor/tesseract/worker.min.js"),
+          corePath: asset("./vendor/tesseract-core/"), langPath: asset("./models").replace(/\/$/, ""),
+          gzip: false, cacheMethod: "none",
+        });
+      }
+      try {return await recognizeDocument(files, kind, progress, worker);}
+      catch (error) {
+        await close();
+        throw error;
+      }
+    },
+    close,
+  };
+}
+
+async function recognizeDocument(files, kind, progress, worker) {
   const pages = [];
-  try {
-    for (const file of files) for await (const {image, number, total} of readPages(file)) {
+  for (const [index, file] of files.entries()) {
+    const source = files.length > 1 ? `Файл ${index + 1} из ${files.length}. ` : "";
+    progress(`${source}Открываем скан…`);
+    for await (const {image, number, total} of readPages(file)) {
       if (pages.length >= MAX_PAGES) throw new Error("В одном документе допускается до 20 страниц.");
-      progress(`Распознаётся страница ${number} из ${total}…`);
+      progress(`${source}Распознаём страницу ${number} из ${total}…`);
       let enhanced;
       try {
         const blocks = await recognizePage(worker, image, image.width, image.height,
@@ -181,7 +216,7 @@ export async function processDocumentGroup(files, kind, progress = () => {}) {
         pages.push({number: pages.length + 1, source_file: file.name, source_page: number, preview: preview(image), blocks});
       } finally {if (enhanced) enhanced.width = enhanced.height = 1;}
     }
-  } finally {await worker.terminate();}
+  }
   progress("Определение категории и разбор оценок…");
   const result = await interpretDocument({pages, type: kind});
   result.engine = "Tesseract.js · браузер";

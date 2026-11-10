@@ -2,16 +2,14 @@
 // JSON data to a fixed function; it is never executed as Python or JavaScript.
 import {loadPyodide} from "./vendor/pyodide/pyodide.mjs";
 const ready = (async () => {
-  const python = await loadPyodide({indexURL: new URL("./vendor/pyodide/", self.location.href).href});
-  const response = await fetch("./core.py");
-  if (!response.ok) throw new Error("Не удалось загрузить обработчик документа.");
-  python.FS.writeFile("/home/pyodide/core.py", await response.text());
-  const subjects = await fetch("./subjects.json");
-  if (!subjects.ok) throw new Error("Не удалось загрузить справочник предметов.");
-  python.FS.writeFile("/home/pyodide/subjects.json", await subjects.text());
-  const archives = await fetch("./uploads.py");
-  if (!archives.ok) throw new Error("Не удалось загрузить обработчик ZIP.");
-  python.FS.writeFile("/home/pyodide/uploads.py", await archives.text());
+  const [python, core, subjects, archives] = await Promise.all([
+    loadPyodide({indexURL: new URL("./vendor/pyodide/", self.location.href).href}),
+    fetch("./core.py"), fetch("./subjects.json"), fetch("./uploads.py"),
+  ]);
+  for (const [name, response] of [["core.py", core], ["subjects.json", subjects], ["uploads.py", archives]]) {
+    if (!response.ok) throw new Error(`Не удалось загрузить ${name}.`);
+    python.FS.writeFile(`/home/pyodide/${name}`, await response.text());
+  }
   python.runPython(`
 import json
 from core import interpret, interpret_lines

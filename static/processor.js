@@ -36,6 +36,18 @@ export async function processDocumentGroup(files, kind, progress) {
   return requestJSON("/api/process-group", {files: payload, type: kind});
 }
 
+export function createDocumentProcessor() {
+  let session;
+  return {
+    async process(files, kind, progress) {
+      if (!browserMode) return processDocumentGroup(files, kind, progress);
+      session ??= (await browser()).createDocumentProcessor();
+      return session.process(files, kind, progress);
+    },
+    async close() {await session?.close();},
+  };
+}
+
 export async function readArchive(file) {
   if (!file.size || file.size > 50 * 1024 * 1024) throw new Error("ZIP должен быть непустым и не превышать 50 МБ.");
   let result;
