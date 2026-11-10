@@ -9,11 +9,22 @@ const ready = (async () => {
   const subjects = await fetch("./subjects.json");
   if (!subjects.ok) throw new Error("Не удалось загрузить справочник предметов.");
   python.FS.writeFile("/home/pyodide/subjects.json", await subjects.text());
+  const archives = await fetch("./uploads.py");
+  if (!archives.ok) throw new Error("Не удалось загрузить обработчик ZIP.");
+  python.FS.writeFile("/home/pyodide/uploads.py", await archives.text());
   python.runPython(`
 import json
 from core import interpret, interpret_lines
+from uploads import unpack_archive
+import base64
 def process_request(payload):
     data = json.loads(payload)
+    if data.get('action') == 'unpack_archive':
+        try:
+            result = unpack_archive(base64.b64decode(data['data'], validate=True), data.get('filename', 'upload.zip'))
+        except ValueError as error:
+            result = {'archive_error': str(error)}
+        return json.dumps(result, ensure_ascii=False)
     result = (interpret(data['pages'], data['type']) if 'pages' in data
               else interpret_lines(data['lines'], data['type']))
     return json.dumps(result, ensure_ascii=False)

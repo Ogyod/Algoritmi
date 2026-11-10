@@ -9,3 +9,15 @@ exports/
 .env
 *.log
 dist/
+
+data/
+
+.ocr-venv/
+
+.ocr-models/
+
+.ocr-backup/
+
+.ocr-tmp/
+
+test-results/

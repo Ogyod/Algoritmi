@@ -157,7 +157,11 @@ async function* readPages(file) {
 }
 
 export async function processDocument(file, kind, progress = () => {}) {
-  if (!file.size || file.size > MAX_BYTES) throw new Error("Допустимый размер файла — от 1 байта до 20 МБ.");
+  return processDocumentGroup([file], kind, progress);
+}
+
+export async function processDocumentGroup(files, kind, progress = () => {}) {
+  if (!files.length || files.some(file => !file.size || file.size > MAX_BYTES)) throw new Error("Допустимый размер файла — от 1 байта до 20 МБ.");
   progress("Загрузка распознавания… Первый запуск может занять больше времени.");
   await loadScript("./vendor/tesseract/tesseract.min.js");
   const worker = await Tesseract.createWorker(["rus", "eng"], 1, {
@@ -167,18 +171,23 @@ export async function processDocument(file, kind, progress = () => {}) {
   });
   const pages = [];
   try {
-    for await (const {image, number, total} of readPages(file)) {
+    for (const file of files) for await (const {image, number, total} of readPages(file)) {
+      if (pages.length >= MAX_PAGES) throw new Error("В одном документе допускается до 20 страниц.");
       progress(`Распознаётся страница ${number} из ${total}…`);
       let enhanced;
       try {
         const blocks = await recognizePage(worker, image, image.width, image.height,
           () => (enhanced = enhance(image)));
-        pages.push({number, preview: preview(image), blocks});
+        pages.push({number: pages.length + 1, source_file: file.name, source_page: number, preview: preview(image), blocks});
       } finally {if (enhanced) enhanced.width = enhanced.height = 1;}
     }
   } finally {await worker.terminate();}
   progress("Определение категории и разбор оценок…");
   const result = await interpretDocument({pages, type: kind});
   result.engine = "Tesseract.js · браузер";
+  result.grades = result.grades.map(row => ({...row, auto_verified: false, verified: false, verification: "manual_required"}));
+  result.auto_grades_verified = false;
+  result.average = null;
+  if (result.grades.length) result.warnings.push("В автономной браузерной версии работает один OCR. Для автоматической сверки двумя движками откройте локальный сервер Algoritmi.");
   return result;
 }

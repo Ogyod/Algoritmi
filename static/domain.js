@@ -40,6 +40,7 @@ export function meanGrade(grades) {
   if (
     grades.some(
       (row) =>
+        (row.verification === "manual_required" && !row.verified) ||
         row.conflict ||
         !row.subject.trim() ||
         !Number.isInteger(row.grade) ||
@@ -51,6 +52,34 @@ export function meanGrade(grades) {
   // Integer sum, deterministic rounding to two decimal places.
   const sum = grades.reduce((total, row) => total + row.grade, 0);
   return Math.floor((sum * 100 + grades.length / 2) / grades.length) / 100;
+}
+
+export function resultAverage(result) {
+  return result.grades_need_review && !result.reviewed ? null : meanGrade(result.grades);
+}
+
+export function invalidateGradeReview(result, index) {
+  result.auto_document_verified = false;
+  result.reviewed = false;
+  result.auto_grades_verified = false;
+  result.grades_need_review = true;
+  result.average = null;
+  if (index != null && result.grades[index]) {
+    Object.assign(result.grades[index], {auto_verified: false, verified: false, verification: "manual_required"});
+  }
+}
+
+export function confirmReview(result) {
+  if (!result) return reviewError(result);
+  const candidate = {...result, grades: (result.grades || []).map(row => ({...row, verified: true,
+    verification: row.auto_verified ? "ocr_consensus" : "manual"}))};
+  const error = reviewError(candidate);
+  if (error) return error;
+  result.grades = candidate.grades;
+  result.reviewed = true;
+  result.grades_need_review = false;
+  result.average = meanGrade(result.grades);
+  return null;
 }
 
 export function reviewError(result) {
@@ -104,7 +133,9 @@ export function buildPacket(files, applicantId) {
       series_not_present: isEducation(r.type) ? !!r.series_not_present : null,
       identifier_candidates: isEducation(r.type) ? r.identifier_candidates : [],
       grades,
-      average_grade: isCertificate(r.type) ? meanGrade(grades) : null,
+      ocr: r.ocr || null,
+      grades_verification: r.auto_grades_verified ? "automatic" : r.reviewed ? "manual" : "needs_review",
+      average_grade: isCertificate(r.type) ? resultAverage(r) : null,
       achievement: r.type === "achievement" ? r.achievement : null,
       points: r.type === "achievement" ? r.points : null,
       recognized_text: r.text,

@@ -80,11 +80,15 @@ def extract_grades(lines):
         else:
             # Keep an unfamiliar subject from a grade table for manual review.
             # Do not extract names or random numbers from the title page.
+            if (line.get('page', 1) not in table_pages
+                    or re.search(r'\b(?:серия|номер|регистрационн\w*|дата|год)\b|№', text)):
+                continue
             candidate = re.fullmatch(
                 r'(?:\d+[.)]?\s+)?([а-я][а-я ()/.,-]{2,100}?)\s+'
-                r'([0-9](?:\s*\([^)]*\))?|\(?отлично\)?|\(?хорошо\)?|'
-                r'\(?удовлетворительно\)?|\(?неудовлетворительно\)?)[ .|]*', text)
-            if line.get('page', 1) not in table_pages or not candidate:
+                r'([0-9]+(?:\s*\([^)]*\))?|\(?отлично\)?|\(?хорошо\)?|'
+                r'\(?удовлетворительно\)?|\(?неудовлетворительно\)?|'
+                r'\(?[?—–-]+\)?|\(?[a-z]+\)?|\(?неразборчиво\)?)[ .|]*', text)
+            if not candidate:
                 continue
             subject, tail = candidate.groups()
             subject = subject.capitalize()
@@ -114,6 +118,7 @@ def classify(text):
         'ABCEHKMOPTXYabcehkmoptxy', 'АВСЕНКМОРТХУавсенкмортху')))
     # Dative on an appendix and one common OCR substitution on patterned paper.
     text = re.sub(r'\bат[тг]естат(?:у|а|ы)?\b', 'аттестат', text)
+    text = re.sub(r'\bдиплому\b', 'диплом', text)
     patterns = {
         'certificate_9': r'аттестат.{0,100}об основном общем(?: образовании)?',
         'certificate_11': r'аттестат.{0,100}о среднем (?:\(полном\) )?общем(?: образовании)?',

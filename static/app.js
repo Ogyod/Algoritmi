@@ -5,11 +5,14 @@ import {
   isEducation,
   hasGradeTable,
   meanGrade,
+  resultAverage,
+  invalidateGradeReview,
+  confirmReview,
   buildPacket,
   packetCSV,
   reviewError,
 } from "./domain.js";
-import {browserMode, processDocument, reinterpretDocument, downloadPacket} from "./processor.js";
+import {browserMode, processDocumentGroup, readArchive, reinterpretDocument, downloadPacket} from "./processor.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -51,39 +54,38 @@ function clearFiles() {
   state.selected = null;
 }
 
-function addFiles(files) {
+async function addFiles(files) {
   if (state.busy) return;
-  if (state.demo) {
-    clearFiles();
-    state.demo = false;
-  }
-  for (const file of files) {
-    if (state.files.length >= 12) {
-      toast("В одном пакете может быть до 12 файлов.");
-      break;
-    }
-    if (!/\.(pdf|jpe?g|png|tiff?|webp)$/i.test(file.name)) {
-      toast(`Формат файла «${file.name}» не поддерживается.`);
-      continue;
-    }
-    if (!file.size || file.size > 20 * 1024 * 1024) {
-      toast(`Файл «${file.name}» должен быть меньше 20 МБ и не пустым.`);
-      continue;
-    }
-    const entry = {
-      id: crypto.randomUUID(),
-      name: file.name,
-      file,
-      url: URL.createObjectURL(file),
-      kind: "auto",
-      status: "ready",
-      result: null,
-    };
-    state.files.push(entry);
-    if (!state.selected) state.selected = entry.id;
-  }
-  state.page = 0;
+  if (state.demo) {clearFiles(); state.demo = false;}
+  state.busy = true;
   render();
+  try {
+    for (const file of files) {
+      try {
+        let documents;
+        if (/\.zip$/i.test(file.name)) {
+          toast("Открываем ZIP: одна папка — один аттестат.");
+          const archive = await readArchive(file);
+          documents = archive.documents;
+          if (archive.skipped_files.length) toast(`Пропущено служебных и неподдерживаемых файлов: ${archive.skipped_files.length}.`);
+        } else {
+          if (!/\.(pdf|jpe?g|png|tiff?|webp)$/i.test(file.name)) throw new Error(`Формат файла «${file.name}» не поддерживается.`);
+          if (!file.size || file.size > 20 * 1024 * 1024) throw new Error(`Файл «${file.name}» должен быть меньше 20 МБ и не пустым.`);
+          if (state.files.length >= 12) throw new Error("Для отдельных файлов в пакете допускается до 12 документов. Несколько аттестатов можно загрузить в ZIP.");
+          documents = [{name: file.name, files: [file]}];
+        }
+        if (state.files.length + documents.length > 200) throw new Error("В пакете допускается до 200 аттестатов.");
+        for (const document of documents) {
+          const first = document.files[0];
+          const entry = {id: crypto.randomUUID(), name: document.name, files: document.files,
+            file: first, size: document.files.reduce((n, item) => n + item.size, 0),
+            url: URL.createObjectURL(first), kind: "auto", status: "ready", result: null};
+          state.files.push(entry);
+          if (!state.selected) state.selected = entry.id;
+        }
+      } catch (error) {toast(error.message);}
+    }
+  } finally {state.busy = false; state.page = 0; render();}
 }
 
 function renderQueue() {
@@ -103,7 +105,7 @@ function renderQueue() {
       return `<div class="queue-item ${file.id === state.selected ? "selected" : ""}">
       <button class="queue-title" data-select="${file.id}">${escapeHTML(file.name)}</button>
       <button class="remove" data-remove="${file.id}" aria-label="Удалить ${escapeHTML(file.name)}" ${state.busy ? "disabled" : ""}>×</button>
-      <div class="queue-meta">${file.file ? (file.file.size / 1024 / 1024).toFixed(2) + " МБ" : "Демонстрационные данные"}</div>
+      <div class="queue-meta">${file.file ? ((file.size || file.file.size) / 1024 / 1024).toFixed(2) + " МБ" : "Демонстрационные данные"}</div>
       <select aria-label="Категория ${escapeHTML(file.name)}" data-kind="${file.id}" ${state.busy ? "disabled" : ""}>
         ${Object.entries({ auto: TYPE_LABELS.auto, ...DOCUMENT_TYPES })
           .map(
@@ -142,10 +144,10 @@ function renderPreview() {
   if (pages.length)
     $("preview").innerHTML =
       `<img src="${escapeHTML(pages[state.page].preview)}" alt="Скан, страница ${state.page + 1}">`;
-  else if (file?.url && /\.pdf$/i.test(file.name))
+  else if (file?.url && /\.pdf$/i.test(file.file?.name || file.name))
     $("preview").innerHTML =
       `<iframe src="${escapeHTML(file.url)}" title="Исходный PDF"></iframe>`;
-  else if (file?.url && !/\.tiff?$/i.test(file.name))
+  else if (file?.url && !/\.tiff?$/i.test(file.file?.name || file.name))
     $("preview").innerHTML =
       `<img src="${escapeHTML(file.url)}" alt="Исходный скан">`;
   else
@@ -174,14 +176,14 @@ function gradeTable(result) {
     (n, row) => n + (Number.isFinite(row.grade) ? row.grade : 0),
     0,
   );
-  return `<div class="average-card"><div><span>${categoryPending ? "Найденные оценки" : "Средний балл этого аттестата"}</span><small id="grade-formula">${categoryPending ? "Выберите категорию аттестата для расчёта среднего балла" : result.grades.length ? `${sum} ÷ ${result.grades.length} предметов` : "Нужно приложение с оценками"}</small></div><strong id="doc-average">${format(categoryPending ? null : meanGrade(result.grades))}</strong></div>
+  return `<div class="average-card"><div><span>${categoryPending ? "Найденные оценки" : "Средний балл этого аттестата"}</span><small id="grade-formula">${categoryPending ? "Выберите категорию аттестата для расчёта среднего балла" : result.grades.length ? `${sum} ÷ ${result.grades.length} предметов` : "Нужно приложение с оценками"}</small></div><strong id="doc-average">${format(categoryPending ? null : resultAverage(result))}</strong></div>
     <table class="grade-table"><thead><tr><th>Предмет</th><th>Оценка</th><th></th></tr></thead><tbody>
     ${result.grades
       .map(
         (
           row,
           index,
-        ) => `<tr class="${row.conflict || row.confidence < 0.8 ? "low-confidence" : ""}" title="${escapeHTML(row.source || "Добавлено вручную")}">
+        ) => `<tr class="${row.conflict || (!row.auto_verified && (row.verification === "manual_required" || row.confidence < 0.8)) ? "low-confidence" : ""}" title="${escapeHTML((row.source || "Добавлено вручную") + (row.votes ? " | " + Object.entries(row.votes).map(([engine, vote]) => `${engine}: ${vote.grade ?? "?"} (${Math.round(vote.confidence * 100)}%)`).join("; ") : ""))}">
       <td><input aria-label="Предмет ${index + 1}" value="${escapeHTML(row.subject)}" data-subject="${index}"></td>
       <td><input aria-label="Оценка ${index + 1}" type="number" min="2" max="5" step="1" value="${row.grade ?? ""}" data-grade="${index}"></td>
       <td><button class="delete-grade" data-delete-grade="${index}" aria-label="Удалить предмет ${index + 1}">×</button></td></tr>`,
@@ -201,13 +203,13 @@ function renderResults() {
   $("review-actions").hidden =
     !result || !Object.hasOwn(DOCUMENT_TYPES, result.type);
   $("confirm").textContent = result?.reviewed
-    ? "Проверка подтверждена"
+    ? (result.auto_document_verified ? "Принят автоматически" : "Проверка подтверждена")
     : "Подтвердить проверку документа";
   $("confirm").disabled = !!result?.reviewed || state.busy;
   $("review-state").textContent = result
     ? result.reviewed
       ? "Проверен"
-      : "Нужна проверка"
+      : result.auto_grades_verified ? "Оценки согласованы" : "Нужна проверка"
     : file?.status === "processing"
       ? "Распознаём"
       : "Ожидает загрузки";
@@ -262,6 +264,12 @@ function renderSummary() {
 }
 
 function render() {
+  const currentStep = state.busy ? 1 : state.files.some((file) => file.result) ? 2 : 0;
+  document.querySelectorAll(".workflow .step").forEach((step, index) => {
+    step.classList.toggle("current", index === currentStep);
+    if (index === currentStep) step.setAttribute("aria-current", "step");
+    else step.removeAttribute("aria-current");
+  });
   renderQueue();
   renderPreview();
   renderResults();
@@ -271,7 +279,7 @@ function render() {
 function edit() {
   const result = selected()?.result;
   if (!result) return;
-  result.reviewed = false;
+  result.reviewed = false; result.auto_document_verified = false;
   renderQueue();
   renderSummary();
   $("review-state").textContent = "Нужна проверка";
@@ -279,7 +287,7 @@ function edit() {
   $("confirm").disabled = false;
   $("confirm").textContent = "Подтвердить проверку документа";
   if (isCertificate(result.type) && $("doc-average")) {
-    $("doc-average").textContent = format(meanGrade(result.grades));
+    $("doc-average").textContent = format(resultAverage(result));
     const sum = result.grades.reduce(
       (n, row) => n + (Number.isFinite(row.grade) ? row.grade : 0),
       0,
@@ -301,7 +309,7 @@ async function processFiles() {
       file.status = "processing";
       render();
       try {
-        file.result = await processDocument(file.file, file.kind, (message) => {
+        file.result = await processDocumentGroup(file.files || [file.file], file.kind, (message) => {
           file.progress = message;
           renderQueue();
         });
@@ -335,7 +343,7 @@ async function changeCategory(file, kind) {
   }
   if (state.demo) {
     file.result.type = kind === "auto" ? file.result.detected_type : kind;
-    file.result.reviewed = false;
+    file.result.reviewed = false; file.result.auto_document_verified = false;
     render();
     return;
   }
@@ -356,7 +364,12 @@ async function changeCategory(file, kind) {
         result[field] = previous[field];
     }
     if (hasGradeTable(previous.type) && hasGradeTable(result.type))
-      result.grades = previous.grades;
+      {
+        result.grades = previous.grades;
+        result.ocr = previous.ocr;
+        result.auto_grades_verified = previous.auto_grades_verified;
+        result.grades_need_review = previous.grades_need_review;
+      }
     if (previous.type === "achievement" && result.type === "achievement") {
       result.achievement = previous.achievement;
       result.points = previous.points;
@@ -388,8 +401,8 @@ async function exportPacket(formatType) {
 
 // Events keep UI actions separate from recognition and pure calculations.
 $("choose").onclick = () => $("files").click();
-$("files").onchange = (event) => {
-  addFiles(event.target.files);
+$("files").onchange = async (event) => {
+  await addFiles(Array.from(event.target.files));
   event.target.value = "";
 };
 for (const name of ["dragenter", "dragover"])
@@ -437,8 +450,11 @@ $("result-content").oninput = (event) => {
     result.grades[+target.dataset.grade].grade =
       target.value === "" ? null : Number(target.value);
     result.grades[+target.dataset.grade].conflict = false;
-  } else if (target.dataset.subject != null)
+    invalidateGradeReview(result, +target.dataset.grade);
+  } else if (target.dataset.subject != null) {
     result.grades[+target.dataset.subject].subject = target.value;
+    invalidateGradeReview(result, +target.dataset.subject);
+  }
   else if (target.id === "document-series")
     result.document_series = target.value;
   else if (target.id === "document-number")
@@ -467,11 +483,14 @@ $("result-content").onclick = (event) => {
       confidence: 1,
       source: "Добавлено вручную",
       conflict: false,
+      verification: "manual_required",
+      verified: false,
+      auto_verified: false,
     });
   else if (event.target.dataset.deleteGrade != null)
     result.grades.splice(+event.target.dataset.deleteGrade, 1);
   else return;
-  result.reviewed = false;
+  invalidateGradeReview(result);
   render();
 };
 
@@ -485,7 +504,7 @@ $("tab-text").onclick = () => {
 };
 $("confirm").onclick = () => {
   const result = selected()?.result,
-    error = reviewError(result);
+    error = confirmReview(result);
   if (error) {
     toast(error);
     return;
@@ -576,17 +595,18 @@ $("demo").onclick = () => {
   ];
   state.selected = state.files[0].id;
   render();
+  $("workspace").scrollIntoView({block: "start"});
   toast(
     "Это заранее заданный пример. Загрузите сканы для настоящего распознавания.",
   );
 };
 
-if (browserMode) $("engine").textContent = "Распознавание в браузере";
+if (browserMode) $("engine").textContent = "Один OCR · ручная сверка";
 else fetch("/api/health")
   .then((response) => response.json())
   .then((result) => {
     $("engine").textContent = result.engine
-      ? "Распознавание готово"
+      ? result.engine.includes("PaddleOCR") ? "Два OCR + третий при расхождениях" : "Один OCR · ручная сверка"
       : "OCR требует настройки";
   })
   .catch(() => ($("engine").textContent = "Нет связи с обработчиком"));

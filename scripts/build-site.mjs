@@ -7,7 +7,7 @@ const out = path.join(root, "dist");
 // Every module, worker, parser and model belongs to the same immutable release.
 // Browser caches must never combine a new interface with an old Python parser.
 const hash = createHash("sha256");
-const releaseFiles = ["core.py", "subjects.json", "pnpm-lock.yaml", "scripts/build-site.mjs",
+const releaseFiles = ["core.py", "uploads.py", "subjects.json", "pnpm-lock.yaml", "scripts/build-site.mjs",
   ...(await readdir(path.join(root, "static"))).map((name) => "static/" + name),
   ...(await readdir(path.join(root, ".models"))).map((name) => ".models/" + name)];
 for (const name of releaseFiles.sort()) {
@@ -20,6 +20,7 @@ await mkdir(path.join(assets, "vendor"), {recursive: true});
 await cp(path.join(root, "static"), assets, {recursive: true});
 await rm(path.join(assets, "index.html"));
 await cp(path.join(root, "core.py"), path.join(assets, "core.py"));
+await cp(path.join(root, "uploads.py"), path.join(assets, "uploads.py"));
 await cp(path.join(root, "subjects.json"), path.join(assets, "subjects.json"));
 await cp(path.join(root, ".models"), path.join(assets, "models"), {recursive: true});
 let html = await readFile(path.join(root, "static/index.html"), "utf8");
@@ -58,4 +59,5 @@ for (const [source, dest] of [["tesseract.js/LICENSE.md", "tesseract.txt"],
   ["pako/LICENSE", "pako.txt"]])
   await cp(path.join(root, "node_modules", source), path.join(assets, "vendor", "licenses", dest));
 await cp(path.join(root, "licenses/pyodide.txt"), path.join(assets, "vendor/licenses/pyodide.txt"));
+await cp(path.join(root, "licenses/unbounded.txt"), path.join(assets, "vendor/licenses/unbounded.txt"));
 console.log("GitHub Pages site built in dist/");
