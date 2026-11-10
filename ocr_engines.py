@@ -25,6 +25,29 @@ def worker_python():
     return sys.executable
 
 
+def warmup():
+    def load(engine):
+        process = worker(engine, [worker_python(), '-u', '-X', 'utf8',
+                                 str(ROOT / 'ocr_worker.py'), engine, '--serve'],
+                         {**os.environ, 'PYTHONIOENCODING': 'utf-8'})
+        try:
+            return process.call({'pages': [], 'models': str(MODEL_ROOT), 'warmup': True}, 90).get('ok', False)
+        except Exception:
+            return False
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        loaded = dict(zip(('rapidocr', 'tesseract', 'easyocr'),
+                          pool.map(load, ('rapidocr', 'tesseract', 'easyocr'))))
+    # Prime inference kernels using only the bundled, synthetic sample.
+    sample = ROOT / 'samples/certificate_9.png'
+    if all(loaded.values()) and sample.is_file():
+        from PIL import Image
+        with Image.open(sample) as image:
+            page = {'page': 1, 'path': str(sample), 'width': image.width, 'height': image.height}
+        from ocr_adapter import parse_engine_rows
+        recognize_document([page], parser=parse_engine_rows)
+    return loaded
+
+
 def run_engine(engine, pages):
     start = time.perf_counter()
     try:
@@ -63,6 +86,7 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
             if page['page'] not in contested:
                 continue
             regions = []
+            line_regions = []
             for row in first_rows:
                 if row['page'] != page['page'] or row['auto_verified']:
                     continue
@@ -72,7 +96,9 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
                     right, bottom = max(b[2] for b in boxes), max(b[3] for b in boxes)
                     margin = max(12, int((bottom - top) * .7))
                     regions.append([left - margin, top - margin, right + margin, bottom + margin])
-            third_pages.append({**page, 'regions': regions})
+                    padding = max(2, int((bottom - top) * .12))
+                    line_regions.append([left-padding, top-padding, right+padding, bottom+padding])
+            third_pages.append({**page, 'regions': regions, 'line_regions': line_regions})
         observations.append(runner('easyocr', third_pages))
     rows = reconcile(observations, threshold, parser)
     summary = {'engines': [{'name': o['engine'], 'ok': o['ok'], 'error': o['error'],

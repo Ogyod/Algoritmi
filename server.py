@@ -163,7 +163,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith('/api/v1/'):
             return self.integration_request()
         if self.path == '/api/health':
-            return self.send(200, {'ok': True, 'app': 'admissions-document-processor', 'engine': engine(), 'max_bytes': MAX_BYTES})
+            return self.send(200, {'ok': True, 'app': 'admissions-document-processor', 'engine': engine(), 'max_bytes': MAX_BYTES,
+                                   'ocr_ready': getattr(self.server, 'ocr_ready', False)})
         files = {'/': ('index.html', 'text/html; charset=utf-8'),
                  '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                  '/domain.js': ('domain.js', 'text/javascript; charset=utf-8'),
@@ -305,6 +306,11 @@ def main():
     parser.add_argument('--open', action='store_true', help='Open the local interface in the browser')
     args = parser.parse_args()
     server = make_server(args.port)
+    from ocr_engines import warmup
+    def prepare():
+        server.ocr_ready = all(warmup().values())
+        print('OCR: готов к обработке' if server.ocr_ready else 'OCR: проверьте локальные модели', flush=True)
+    threading.Thread(target=prepare, daemon=True, name='ocr-warmup').start()
     print(f'Приём · Документы: http://127.0.0.1:{args.port}', flush=True)
     print(f'OCR: {engine() or "не настроен"}', flush=True)
     if args.open:

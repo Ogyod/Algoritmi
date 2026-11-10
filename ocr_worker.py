@@ -35,13 +35,13 @@ def rapid_reader(models, download):
 
 
 @lru_cache(maxsize=4)
-def easy_reader(models, download):
+def easy_reader(models, download, detection=True):
     import easyocr
     import torch
     torch.set_num_threads(2)
     return easyocr.Reader(['ru', 'en'], gpu=False, model_storage_directory=str(models / 'easyocr'),
                           user_network_directory=str(models / 'easyocr-user'),
-                          download_enabled=download, verbose=False, quantize=False)
+                          download_enabled=download, verbose=False, quantize=False, detector=detection)
 
 
 def enhance_image(source, destination):
@@ -88,6 +88,7 @@ def merge_regions(regions, width, height):
 def recognize(engine, pages, models, download=False):
     lines = []
     if engine == 'rapidocr':
+        manifest = models / 'rapid-ready.json'
         reader = rapid_reader(models, download)
         for page in pages:
             result = reader(image_array(page['path'])[:, :, ::-1].copy())
@@ -105,15 +106,32 @@ def recognize(engine, pages, models, download=False):
                 local[prefix + '.model_path'] = 'rapid/' + Path(info['model_dir']).name
             manifest.write_text(json.dumps(local, indent=2), encoding='utf-8')
     elif engine == 'easyocr':
-        reader = easy_reader(models, download)
+        reader = easy_reader(models, download, not all(page.get('line_regions') for page in pages))
         for page in pages:
             array = image_array(page['path'])
             regions = page.get('regions') or [[0, 0, array.shape[1], array.shape[0]]]
-            for x0, y0, x1, y1 in regions:
+            direct = page.get('line_regions') or []
+            for index, (x0, y0, x1, y1) in enumerate(regions):
                 x0, y0, x1, y1 = max(0, x0), max(0, y0), min(array.shape[1], x1), min(array.shape[0], y1)
                 if x1 <= x0 or y1 <= y0:
                     continue
-                for box, text, score in reader.readtext(array[y0:y1, x0:x1].copy(), detail=1, paragraph=False):
+                answer = None
+                if index < len(direct):
+                    left, top, right, bottom = direct[index]
+                    left, top = max(0,left), max(0,top)
+                    right, bottom = min(array.shape[1],right), min(array.shape[0],bottom)
+                    if right-left > 3*(bottom-top) and 0 < bottom-top < array.shape[0]*.12:
+                        crop = Image.fromarray(array[top:bottom,left:right]).convert('L')
+                        import numpy as np
+                        attempted = reader.recognize(np.asarray(crop), detail=1, paragraph=False)
+                        from ocr_consensus import GRADE_END
+                        if (attempted and all(float(item[2]) >= .75 and GRADE_END.match(item[1].strip())
+                                              for item in attempted)):
+                            answer = attempted
+                            x0, y0 = left, top
+                if answer is None:
+                    answer = easy_reader(models, download).readtext(array[y0:y1, x0:x1].copy(), detail=1, paragraph=False)
+                for box, text, score in answer:
                     shifted = [[x + x0, y + y0] for x, y in box]
                     lines.append({'text': text, 'confidence': float(score), 'page': page['page'], 'box': rectangle(shifted)})
     elif engine == 'tesseract':
@@ -180,7 +198,15 @@ if __name__ == '__main__':
                 try:
                     payload = json.loads(line)
                     with contextlib.redirect_stdout(sys.stderr):
-                        answer = recognize(sys.argv[1], payload['pages'], Path(payload['models']))
+                        models = Path(payload['models'])
+                        if payload.get('warmup') and sys.argv[1] == 'rapidocr':
+                            rapid_reader(models, False)
+                            answer = []
+                        elif payload.get('warmup') and sys.argv[1] == 'easyocr':
+                            easy_reader(models, False, False)
+                            answer = []
+                        else:
+                            answer = recognize(sys.argv[1], payload['pages'], models)
                     response = {'ok': True, 'lines': answer}
                 except Exception:
                     response = {'ok': False, 'lines': []}

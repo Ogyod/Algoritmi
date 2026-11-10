@@ -32,7 +32,7 @@ async function createRecognizer() {
   return {
     async recognize(images) {
       const count = Math.min(maximum, images.length);
-      await ensureWorkers(count);
+      await ensureWorkers(Math.max(1, count));
       const pages = new Array(images.length);
       let next = 0;
       await Promise.all(workers.slice(0, count).map(async (worker) => {
