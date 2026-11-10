@@ -40,6 +40,7 @@ def _ordered_fragments(lines):
 
 
 def parse_lines(lines, subject_hints=()):
+    hints = (*SUBJECT_HINTS, *subject_hints)
     merged = []
     for line in _ordered_fragments(lines):
         line = dict(line)
@@ -69,10 +70,13 @@ def parse_lines(lines, subject_hints=()):
             conflict = digit is not None and bool(word) and digit != WORDS[word]
             if conflict:
                 grade = None
-        elif any(hint in normalized(text) for hint in (*SUBJECT_HINTS, *subject_hints)) and len(text) < 160:
-            subject, grade = text, None
         else:
-            continue
+            if len(text) >= 160:
+                continue
+            normalized_text = normalized(text)
+            if not any(hint in normalized_text for hint in hints):
+                continue
+            subject, grade = text, None
         subject = re.sub(r'^\s*\d+[.)]\s*', '', subject).strip(' .:—-')
         if len(subject) < 2:
             continue

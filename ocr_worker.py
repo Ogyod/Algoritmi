@@ -1,4 +1,5 @@
 """One engine per subprocess, models loaded once for a batch of pages."""
+from concurrent.futures import ThreadPoolExecutor
 import contextlib
 import csv
 import io
@@ -35,13 +36,13 @@ def rapid_reader(models, download):
 
 
 @lru_cache(maxsize=4)
-def easy_reader(models, download, detection=True):
+def easy_reader(models, download):
     import easyocr
     import torch
-    torch.set_num_threads(2)
+    torch.set_num_threads(min(4, os.cpu_count() or 2))
     return easyocr.Reader(['ru', 'en'], gpu=False, model_storage_directory=str(models / 'easyocr'),
                           user_network_directory=str(models / 'easyocr-user'),
-                          download_enabled=download, verbose=False, quantize=False, detector=detection)
+                          download_enabled=download, verbose=False, quantize=False, detector=False)
 
 
 def enhance_image(source, destination):
@@ -106,7 +107,7 @@ def recognize(engine, pages, models, download=False):
                 local[prefix + '.model_path'] = 'rapid/' + Path(info['model_dir']).name
             manifest.write_text(json.dumps(local, indent=2), encoding='utf-8')
     elif engine == 'easyocr':
-        reader = easy_reader(models, download, not all(page.get('line_regions') for page in pages))
+        reader = easy_reader(models, download)
         for page in pages:
             array = image_array(page['path'])
             regions = page.get('regions') or [[0, 0, array.shape[1], array.shape[0]]]
@@ -130,7 +131,12 @@ def recognize(engine, pages, models, download=False):
                             answer = attempted
                             x0, y0 = left, top
                 if answer is None:
-                    answer = easy_reader(models, download).readtext(array[y0:y1, x0:x1].copy(), detail=1, paragraph=False)
+                    if not hasattr(reader, 'detector'):
+                        import torch
+                        reader.setDetector('craft')
+                        # Keep the CRAFT weights in the layout used by CPU convolutions.
+                        reader.detector.to(memory_format=torch.channels_last)
+                    answer = reader.readtext(array[y0:y1, x0:x1].copy(), detail=1, paragraph=False)
                 for box, text, score in answer:
                     shifted = [[x + x0, y + y0] for x, y in box]
                     lines.append({'text': text, 'confidence': float(score), 'page': page['page'], 'box': rectangle(shifted)})
@@ -170,20 +176,36 @@ def recognize(engine, pages, models, download=False):
                                   'box': [int(block['x']*w), int(block['y']*h),
                                           int((block['x']+block['width'])*w), int((block['y']+block['height'])*h)]})
             return lines
-        for page in pages:
-            result = subprocess.run([executable, page['path'], 'stdout', '-l', 'rus+eng', '--psm', '3', 'tsv'],
-                                    capture_output=True, check=True, timeout=90)
+        tessdata = Path(__file__).resolve().parent / '.models'
+        parameters = ['-l', 'rus+eng', '--psm', '3', '-c', 'tessedit_create_tsv=1']
+        if not os.environ.get('TESSDATA_PREFIX') and all((tessdata / f'{lang}.traineddata').is_file()
+                                                       for lang in ('rus', 'eng')):
+            parameters.extend(['--tessdata-dir', str(tessdata)])
+        parallel = len(pages) > 1 and os.environ.get('OCR_PAGE_WORKERS') != '1'
+        env = os.environ.copy()
+        if parallel:
+            env.setdefault('OMP_THREAD_LIMIT', '1')
+
+        def recognize_page(page):
+            result = subprocess.run([executable, page['path'], 'stdout', *parameters],
+                                    capture_output=True, check=True, timeout=90, env=env)
             groups = {}
             for word in csv.DictReader(io.StringIO(result.stdout.decode('utf-8')), delimiter='\t'):
                 if word.get('text', '').strip() and float(word['conf']) >= 0:
                     key = tuple(word[k] for k in ('block_num', 'par_num', 'line_num'))
                     groups.setdefault(key, []).append(word)
-            for words in groups.values():
-                lines.append({'text': ' '.join(w['text'] for w in words), 'page': page['page'],
-                              'confidence': min(float(w['conf']) for w in words) / 100,
-                              'box': [min(int(w['left']) for w in words), min(int(w['top']) for w in words),
-                                      max(int(w['left']) + int(w['width']) for w in words),
-                                      max(int(w['top']) + int(w['height']) for w in words)]})
+            return [{'text': ' '.join(w['text'] for w in words), 'page': page['page'],
+                     'confidence': min(float(w['conf']) for w in words) / 100,
+                     'box': [min(int(w['left']) for w in words), min(int(w['top']) for w in words),
+                             max(int(w['left']) + int(w['width']) for w in words),
+                             max(int(w['top']) + int(w['height']) for w in words)]}
+                    for words in groups.values()]
+
+        if parallel:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                return [line for page_lines in pool.map(recognize_page, pages) for line in page_lines]
+        for page in pages:
+            lines.extend(recognize_page(page))
     else:
         raise ValueError('Unknown OCR engine')
     return lines
@@ -203,7 +225,7 @@ if __name__ == '__main__':
                             rapid_reader(models, False)
                             answer = []
                         elif payload.get('warmup') and sys.argv[1] == 'easyocr':
-                            easy_reader(models, False, False)
+                            easy_reader(models, False)
                             answer = []
                         else:
                             answer = recognize(sys.argv[1], payload['pages'], models)

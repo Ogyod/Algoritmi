@@ -76,6 +76,8 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
     contested = {r['page'] for r in first_rows if not r['auto_verified']}
     # Pages with no candidates, or a failed primary engine, also need another reading.
     for page in pages:
+        if page['page'] in contested:
+            continue
         page_observations = [{**o, 'lines': [line for line in o['lines'] if line['page'] == page['page']]} for o in observations]
         page_rows = reconcile(page_observations, threshold, parser)
         if needs_third(page_observations, page_rows):
@@ -100,7 +102,7 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
                     line_regions.append([left-padding, top-padding, right+padding, bottom+padding])
             third_pages.append({**page, 'regions': regions, 'line_regions': line_regions})
         observations.append(runner('easyocr', third_pages))
-    rows = reconcile(observations, threshold, parser)
+    rows = reconcile(observations, threshold, parser) if contested else first_rows
     summary = {'engines': [{'name': o['engine'], 'ok': o['ok'], 'error': o['error'],
                             **({'seconds': o['seconds']} if 'seconds' in o else {})} for o in observations],
                'third_used': bool(contested), 'third_pages': sorted(contested), 'threshold': threshold,
