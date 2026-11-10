@@ -12,7 +12,7 @@ import {
   packetCSV,
   reviewError,
 } from "./domain.js";
-import {browserMode, processDocumentGroup, readArchive, reinterpretDocument, downloadPacket} from "./processor.js";
+import {browserMode, createDocumentProcessor, readArchive, reinterpretDocument, downloadPacket} from "./processor.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -113,7 +113,7 @@ function renderQueue() {
               `<option value="${key}" ${file.kind === key ? "selected" : ""}>${label}</option>`,
           )
           .join("")}
-      </select><p class="queue-status ${file.status === "error" ? "error" : ""}">${escapeHTML(status)}</p></div>`;
+      </select><p id="queue-status-${file.id}" class="queue-status ${file.status === "error" ? "error" : ""}">${escapeHTML(status)}</p></div>`;
     })
     .join("");
   $("process").disabled =
@@ -195,7 +195,7 @@ function gradeTable(result) {
 function renderResults() {
   const file = selected(),
     result = file?.result;
-  $("result-content").inert = state.busy;
+  $("result-content").inert = state.busy && !!result;
   for (const name of ["data", "text"]) {
     $("tab-" + name).classList.toggle("active", state.tab === name);
     $("tab-" + name).setAttribute("aria-selected", String(state.tab === name));
@@ -218,7 +218,7 @@ function renderResults() {
   if (!result) {
     $("result-content").innerHTML =
       file?.status === "processing"
-        ? '<div class="progress">Распознаём текст и разбираем документ.<br>Многостраничный PDF может занять несколько минут.</div>'
+        ? `<div class="progress" id="recognition-status" role="status">${escapeHTML(file.progress)}</div>`
         : file?.status === "error"
           ? `<div class="notice">${escapeHTML(file.error)}</div>`
           : '<div class="result-empty"><h3>Сначала загрузите сканы</h3><p>Здесь будут категория, серия и номер документа; для аттестатов — оценки и средний балл.</p><div class="supported"><span>9 классов</span><span>11 классов</span><span>Дипломы</span></div></div>';
@@ -302,16 +302,21 @@ async function processFiles() {
   if (state.busy || state.demo) return;
   state.busy = true;
   const pending = state.files.filter((file) => file.status !== "done");
+  const processor = createDocumentProcessor();
   try {
-    for (const file of pending) {
+    for (const [index, file] of pending.entries()) {
       state.selected = file.id;
       state.page = 0;
       file.status = "processing";
+      const position = pending.length > 1 ? `Документ ${index + 1} из ${pending.length}. ` : "";
+      file.progress = `${position}Готовим документ…`;
       render();
       try {
-        file.result = await processDocumentGroup(file.files || [file.file], file.kind, (message) => {
-          file.progress = message;
-          renderQueue();
+        file.result = await processor.process(file.files || [file.file], file.kind, (message) => {
+          file.progress = position + message;
+          $("queue-status-" + file.id).textContent = file.progress;
+          const status = $("recognition-status");
+          if (status) status.textContent = file.progress;
         });
         file.status = "done";
         if (Object.hasOwn(DOCUMENT_TYPES, file.result.type))
@@ -326,6 +331,7 @@ async function processFiles() {
   } finally {
     state.busy = false;
     render();
+    await processor.close();
   }
   toast(
     pending.some((file) => file.status === "error")
