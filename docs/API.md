@@ -27,8 +27,8 @@ API доступен у **локального Python-сервера** на `htt
 В PowerShell из папки проекта:
 
 ```powershell
-$env:APP_API_KEY = .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(32))"
-.\.venv\Scripts\python.exe -X utf8 server.py --open
+$env:APP_API_KEY = .\.ocr-venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(32))"
+.\.ocr-venv\Scripts\python.exe -X utf8 server.py --open
 ```
 
 Передайте то же значение ключа клиентской программе через её окружение.
