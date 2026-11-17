@@ -1,1 +1,6 @@
-.\.venv\Scripts\python.exe -X utf8 server.py --open
+Windows: один раз запустите .\setup_ocr.ps1, затем .\start.ps1
+macOS и Linux: один раз запустите sh setup_ocr.sh
+macOS: откройте start.command
+Linux: запустите .ocr-venv/bin/python server.py --open
+
+Подробности: README.md
