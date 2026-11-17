@@ -47,6 +47,7 @@ def interpret_consensus(recognition, kind='auto'):
                 + bool(result['grades']))
     result = max(candidates, key=usefulness) if candidates else interpret_lines([], kind)
     result['ocr'] = recognition['ocr']
+    result['docling'] = recognition.get('docling', {'used': False, 'ok': False, 'suggested': 0, 'hints': 0})
     names = {'rapidocr': 'PaddleOCR', 'tesseract': 'Tesseract', 'easyocr': 'EasyOCR'}
     result['engine'] = ' + '.join(names[o['engine']] for o in recognition['observations'] if o['ok']) or 'OCR недоступен'
     result['auto_grades_verified'] = False
@@ -78,6 +79,12 @@ def interpret_consensus(recognition, kind='auto'):
         else:
             result['warnings'].append('Оценки не согласованы. Загрузите приложение с оценками или внесите строки вручную.')
     result['warnings'].extend(o['error'] for o in recognition['observations'] if not o['ok'])
+    if result['docling']['suggested']:
+        result['warnings'].append(f"Docling нашёл ещё {result['docling']['suggested']} строк(и) таблицы. Сверьте их со сканом и заполните оценки вручную.")
+    if result['docling']['hints']:
+        result['warnings'].append('В подсказках спорных строк есть вариант Docling. Он требует проверки по скану.')
+    elif result['docling']['used'] and not result['docling']['ok']:
+        result['warnings'].append('Docling не смог проверить сложную таблицу. Сверьте её со сканом.')
     # Automatic grade agreement does not claim that series, number or category were manually reviewed.
     result['reviewed'] = result['auto_document_verified']
     if result['auto_document_verified'] and not result.get('document_series'):

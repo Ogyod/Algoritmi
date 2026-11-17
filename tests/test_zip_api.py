@@ -33,7 +33,7 @@ def archive(entries):
     return output.getvalue()
 
 
-def recognized(images):
+def recognized(images, kind='auto'):
     from ocr_engines import recognize_document
     from ocr_adapter import parse_engine_rows
     def runner(engine, pages):
@@ -149,7 +149,7 @@ class API(unittest.TestCase):
 
     def test_slow_ocr_leaves_results_readable(self):
         entered, release = threading.Event(), threading.Event()
-        def slow(images):
+        def slow(images, kind='auto'):
             entered.set(); release.wait(10)
             return recognized(images)
         with patch('server.recognize', side_effect=slow):

@@ -2,7 +2,9 @@
 set -e
 cd "${0:A:h}"
 TASK_RUNTIME="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies"
-if [[ -x "$TASK_RUNTIME/python/bin/python3" ]]; then
+if [[ -x .ocr-venv/bin/python ]]; then
+  TASK_PYTHON="$PWD/.ocr-venv/bin/python"
+elif [[ -x "$TASK_RUNTIME/python/bin/python3" ]]; then
   TASK_PYTHON="$TASK_RUNTIME/python/bin/python3"
 else
   if [[ ! -x .venv/bin/python ]]; then
