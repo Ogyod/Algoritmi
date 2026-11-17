@@ -51,8 +51,9 @@ def engine():
     return 'Tesseract.js · один OCR, нужна сверка' if tesseract else None
 
 
-def recognize(images):
-    return recognize_document(images, parser=parse_engine_rows, include_observations=True)
+def recognize(images, kind='auto'):
+    return recognize_document(images, parser=parse_engine_rows, include_observations=True,
+                              requested_type=kind)
 
 
 def process(data, kind):
@@ -124,7 +125,7 @@ def process_group(files, kind):
                             handle_image(image.copy(), i+1)
                 except (UnidentifiedImageError, Image.DecompressionBombError, OSError):
                     raise ValueError('Не удалось прочитать изображение. Используйте PDF, JPEG, PNG, TIFF или WEBP.')
-        recognized = recognize(images)
+        recognized = recognize(images, kind)
         result = interpret_consensus(recognized, kind)
         result['pages'] = [{k: v for k, v in page.items() if k != 'blocks'} for page in pages]
     return result

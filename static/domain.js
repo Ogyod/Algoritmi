@@ -134,6 +134,7 @@ export function buildPacket(files, applicantId) {
       identifier_candidates: isEducation(r.type) ? r.identifier_candidates : [],
       grades,
       ocr: r.ocr || null,
+      docling: r.docling || null,
       grades_verification: r.auto_grades_verified ? "automatic" : r.reviewed ? "manual" : "needs_review",
       average_grade: isCertificate(r.type) ? resultAverage(r) : null,
       achievement: r.type === "achievement" ? r.achievement : null,

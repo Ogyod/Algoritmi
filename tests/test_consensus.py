@@ -79,6 +79,70 @@ class ConsensusTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIsNone(rows[0]['grade'])
 
+    def test_agreed_diploma_skips_unneeded_full_page_third_ocr(self):
+        calls = []
+        def runner(engine, pages):
+            calls.append(engine)
+            return {'engine': engine, 'ok': True, 'error': '', 'lines': [
+                {'page': 1, 'text': text, 'confidence': .96, 'box': [10, i*40, 700, i*40+30]}
+                for i, text in enumerate(('Диплом бакалавра', 'Серия АБ Номер 0012345'))]}
+        result = recognize_document([{'page': 1}], runner, parse_engine_rows, True)
+        self.assertEqual(calls, ['rapidocr', 'tesseract'])
+        self.assertFalse(result['ocr']['third_used'])
+        self.assertEqual(result['grades'], [])
+
+    def test_disputed_diploma_number_still_gets_third_read(self):
+        calls = []
+        def runner(engine, pages):
+            calls.append(engine)
+            number = '9999999' if engine == 'tesseract' else '0012345'
+            return {'engine': engine, 'ok': True, 'error': '', 'lines': [
+                {'page': 1, 'text': text, 'confidence': .96, 'box': [10, i*40, 700, i*40+30]}
+                for i, text in enumerate(('Диплом бакалавра', 'Серия АБ Номер ' + number))]}
+        result = recognize_document([{'page': 1}], runner, parse_engine_rows, True)
+        self.assertEqual(calls, ['rapidocr', 'tesseract', 'easyocr'])
+        self.assertTrue(result['ocr']['third_used'])
+
+    def test_certificate_without_detected_grades_still_gets_third_read(self):
+        calls = []
+        def runner(engine, pages):
+            calls.append(engine)
+            return observation(engine, [])
+        recognize_document([{'page': 1}], runner, parse_engine_rows, True)
+        self.assertEqual(calls, ['rapidocr', 'tesseract', 'easyocr'])
+
+    def test_docling_adds_missing_table_row_only_for_manual_review(self):
+        calls = []
+        def runner(engine, pages):
+            return observation(engine, ['Алгебра 5'])
+        def tables(pages):
+            calls.extend(page['page'] for page in pages)
+            return {'ok': True, 'rows': [{'page': 1, 'text': 'Физика 4'},
+                                         {'page': 1, 'text': 'Алгебра 5'}]}
+        recognition = recognize_document([{'page': 1}], runner, parse_engine_rows, True,
+                                         docling_runner=tables)
+        result = interpret_consensus(recognition)
+        self.assertEqual(calls, [])  # Agreed grades do not start Docling.
+        self.assertFalse(result['docling']['used'])
+
+        def disputed(engine, pages):
+            grade = {'rapidocr': 5, 'tesseract': 4, 'easyocr': 3}[engine]
+            return observation(engine, [f'Алгебра {grade}'])
+        recognition = recognize_document([{'page': 1}], disputed, parse_engine_rows, True,
+                                         docling_runner=tables)
+        result = interpret_consensus(recognition)
+        self.assertEqual(calls, [1])
+        self.assertEqual(result['docling']['suggested'], 1)
+        self.assertEqual(result['docling']['hints'], 1)
+        proposed = next(row for row in result['grades'] if row['subject'] == 'Физика')
+        self.assertIsNone(proposed['grade'])
+        self.assertEqual(proposed['suggested_grade'], 4)
+        self.assertFalse(proposed['auto_verified'])
+        disputed_row = next(row for row in result['grades'] if row['subject'] == 'Алгебра')
+        self.assertEqual(disputed_row['votes']['docling']['grade'], 5)
+        self.assertIsNone(disputed_row['grade'])
+        self.assertIsNone(result['average'])
+
 
 class BatchConsensusTests(unittest.TestCase):
     def setUp(self):

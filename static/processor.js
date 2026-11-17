@@ -38,13 +38,22 @@ export async function processDocumentGroup(files, kind, progress) {
 
 export function createDocumentProcessor() {
   let session;
+  let idleTimer;
+  async function close() {
+    clearTimeout(idleTimer);
+    const current = session;
+    session = undefined;
+    await current?.close();
+  }
   return {
     async process(files, kind, progress) {
       if (!browserMode) return processDocumentGroup(files, kind, progress);
+      clearTimeout(idleTimer);
       session ??= (await browser()).createDocumentProcessor();
-      return session.process(files, kind, progress);
+      try {return await session.process(files, kind, progress);}
+      finally {idleTimer = setTimeout(() => void close(), 90000);}
     },
-    async close() {await session?.close();},
+    close,
   };
 }
 

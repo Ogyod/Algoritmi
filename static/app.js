@@ -23,6 +23,7 @@ const state = {
   busy: false,
   demo: false,
 };
+const processor = createDocumentProcessor();
 const escapeHTML = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -183,7 +184,7 @@ function gradeTable(result) {
         (
           row,
           index,
-        ) => `<tr class="${row.conflict || (!row.auto_verified && (row.verification === "manual_required" || row.confidence < 0.8)) ? "low-confidence" : ""}" title="${escapeHTML((row.source || "Добавлено вручную") + (row.votes ? " | " + Object.entries(row.votes).map(([engine, vote]) => `${engine}: ${vote.grade ?? "?"} (${Math.round(vote.confidence * 100)}%)`).join("; ") : ""))}">
+        ) => `<tr class="${row.conflict || (!row.auto_verified && (row.verification === "manual_required" || row.confidence < 0.8)) ? "low-confidence" : ""}" title="${escapeHTML((row.source || "Добавлено вручную") + (row.votes ? " | " + Object.entries(row.votes).map(([engine, vote]) => engine === "docling" ? `Docling: предложено ${vote.grade ?? "?"}` : `${engine}: ${vote.grade ?? "?"} (${Math.round(vote.confidence * 100)}%)`).join("; ") : ""))}">
       <td><input aria-label="Предмет ${index + 1}" value="${escapeHTML(row.subject)}" data-subject="${index}"></td>
       <td><input aria-label="Оценка ${index + 1}" type="number" min="2" max="5" step="1" value="${row.grade ?? ""}" data-grade="${index}"></td>
       <td><button class="delete-grade" data-delete-grade="${index}" aria-label="Удалить предмет ${index + 1}">×</button></td></tr>`,
@@ -302,7 +303,6 @@ async function processFiles() {
   if (state.busy || state.demo) return;
   state.busy = true;
   const pending = state.files.filter((file) => file.status !== "done");
-  const processor = createDocumentProcessor();
   try {
     for (const [index, file] of pending.entries()) {
       state.selected = file.id;
@@ -331,7 +331,6 @@ async function processFiles() {
   } finally {
     state.busy = false;
     render();
-    await processor.close();
   }
   toast(
     pending.some((file) => file.status === "error")
@@ -339,6 +338,8 @@ async function processFiles() {
       : "Распознавание завершено. Сверьте данные со сканами.",
   );
 }
+
+window.addEventListener("pagehide", () => {void processor.close();});
 
 async function changeCategory(file, kind) {
   if (state.busy) return;
@@ -373,6 +374,7 @@ async function changeCategory(file, kind) {
       {
         result.grades = previous.grades;
         result.ocr = previous.ocr;
+        result.docling = previous.docling;
         result.auto_grades_verified = previous.auto_grades_verified;
         result.grades_need_review = previous.grades_need_review;
       }
