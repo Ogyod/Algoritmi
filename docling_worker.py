@@ -1,9 +1,14 @@
 """Offline Docling table extraction for pages whose grades need manual review."""
 import contextlib
 import json
-import os
-from pathlib import Path
+import re
 import sys
+from pathlib import Path
+
+from ocr_consensus import GRADE_END
+
+GRADE_CELL = re.compile(
+    r'(?:[2-5](?:\s*\([^)]*\))?|отлично|хорошо|удовлетворительно|неудовлетворительно)', re.I)
 
 
 def converter_for(models):
@@ -44,7 +49,12 @@ def table_rows(document):
         frame = table.export_to_dataframe(doc=document)
         for cells in frame.itertuples(index=False, name=None):
             parts = [str(cell).strip() for cell in cells if cell is not None and str(cell).strip()]
-            if len(parts) >= 2:
+            if len(parts) >= 4 and len(parts) % 2 == 0 and all(
+                    GRADE_CELL.fullmatch(parts[i + 1]) for i in range(0, len(parts), 2)):
+                rows.extend(f'{parts[i]} {parts[i + 1]}'[:500] for i in range(0, len(parts), 2))
+            elif parts and all(GRADE_END.fullmatch(part) for part in parts):
+                rows.extend(part[:500] for part in parts)
+            elif len(parts) >= 2:
                 rows.append(' '.join(parts)[:500])
     return rows[:100]
 
