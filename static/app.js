@@ -21,7 +21,6 @@ const state = {
   page: 0,
   tab: "data",
   busy: false,
-  demo: false,
 };
 const processor = createDocumentProcessor();
 const escapeHTML = (value) =>
@@ -49,15 +48,8 @@ function toast(message) {
   toastTimer = setTimeout(() => ($("toast").hidden = true), 5000);
 }
 
-function clearFiles() {
-  for (const file of state.files) if (file.url) URL.revokeObjectURL(file.url);
-  state.files = [];
-  state.selected = null;
-}
-
 async function addFiles(files) {
   if (state.busy) return;
-  if (state.demo) {clearFiles(); state.demo = false;}
   state.busy = true;
   render();
   try {
@@ -119,13 +111,11 @@ function renderQueue() {
     .join("");
   $("process").disabled =
     state.busy ||
-    state.demo ||
     !state.files.some((file) => file.status !== "done");
   $("process").textContent = state.busy
     ? "Идёт распознавание…"
     : "Распознать документы";
   $("choose").disabled = state.busy;
-  $("demo").disabled = state.busy;
 }
 
 function renderPreview() {
@@ -153,10 +143,8 @@ function renderPreview() {
       `<img src="${escapeHTML(file.url)}" alt="Исходный скан">`;
   else
     $("preview").innerHTML =
-      `<div class="empty-state"><h3>${file ? "Скан появится после распознавания" : "Ваш документ появится здесь"}</h3><p>${state.demo ? "Это пример с заранее заданными данными." : "Загрузите файл и выберите его из пакета."}</p></div>`;
-  $("scan-hint").textContent = state.demo
-    ? "Пример · не результат распознавания"
-    : "Оригинал всегда рядом с данными";
+      `<div class="empty-state"><h3>${file ? "Скан появится после распознавания" : "Ваш документ появится здесь"}</h3><p>Загрузите файл и выберите его из пакета.</p></div>`;
+  $("scan-hint").textContent = "Оригинал всегда рядом с данными";
 }
 
 function educationalFields(result) {
@@ -173,18 +161,19 @@ function educationalFields(result) {
 
 function gradeTable(result) {
   const categoryPending = result.type === "education_unknown";
+  const average = categoryPending ? null : resultAverage(result);
   const sum = result.grades.reduce(
     (n, row) => n + (Number.isFinite(row.grade) ? row.grade : 0),
     0,
   );
-  return `<div class="average-card"><div><span>${categoryPending ? "Найденные оценки" : "Средний балл этого аттестата"}</span><small id="grade-formula">${categoryPending ? "Выберите категорию аттестата для расчёта среднего балла" : result.grades.length ? `${sum} ÷ ${result.grades.length} предметов` : "Нужно приложение с оценками"}</small></div><strong id="doc-average">${format(categoryPending ? null : resultAverage(result))}</strong></div>
+  return `<div class="average-card"><div><span>${categoryPending ? "Найденные оценки" : "Средний балл этого аттестата"}</span><small id="grade-formula">${categoryPending ? "Выберите категорию аттестата для расчёта среднего балла" : !result.grades.length ? "Нужно приложение с оценками" : average == null ? "Проверьте жёлтые строки по скану для расчёта среднего балла" : `${sum} ÷ ${result.grades.length} предметов`}</small></div><strong id="doc-average">${format(average)}</strong></div>
     <table class="grade-table"><thead><tr><th>Предмет</th><th>Оценка</th><th></th></tr></thead><tbody>
     ${result.grades
       .map(
         (
           row,
           index,
-        ) => `<tr class="${row.conflict || (!row.auto_verified && (row.verification === "manual_required" || row.confidence < 0.8)) ? "low-confidence" : ""}" title="${escapeHTML((row.source || "Добавлено вручную") + (row.votes ? " | " + Object.entries(row.votes).map(([engine, vote]) => engine === "docling" ? `Docling: предложено ${vote.grade ?? "?"}` : `${engine}: ${vote.grade ?? "?"} (${Math.round(vote.confidence * 100)}%)`).join("; ") : ""))}">
+        ) => `<tr class="${row.conflict || (!row.auto_verified && (row.verification === "manual_required" || row.confidence < 0.8)) ? "low-confidence" : ""}" title="${escapeHTML(row.auto_verified ? (row.source || "Оценка согласована OCR") : "Предварительная оценка. Проверьте её по скану.")}">
       <td><input aria-label="Предмет ${index + 1}" value="${escapeHTML(row.subject)}" data-subject="${index}"></td>
       <td><input aria-label="Оценка ${index + 1}" type="number" min="2" max="5" step="1" value="${row.grade ?? ""}" data-grade="${index}"></td>
       <td><button class="delete-grade" data-delete-grade="${index}" aria-label="Удалить предмет ${index + 1}">×</button></td></tr>`,
@@ -225,17 +214,12 @@ function renderResults() {
           : '<div class="result-empty"><h3>Сначала загрузите сканы</h3><p>Здесь будут категория, серия и номер документа; для аттестатов — оценки и средний балл.</p><div class="supported"><span>9 классов</span><span>11 классов</span><span>Дипломы</span></div></div>';
     return;
   }
-  const demo = state.demo
-    ? '<div class="demo-label">Демонстрационные данные. Это не результат OCR.</div>'
-    : "";
   if (state.tab === "text") {
     $("result-content").innerHTML =
-      demo +
       `<div class="raw-text">${escapeHTML(result.text) || "Текст не найден."}</div>`;
     return;
   }
   let html =
-    demo +
     `<div class="document-category">${escapeHTML(TYPE_LABELS[result.type])}</div>`;
   html += result.warnings
     .map((message) => `<div class="notice">${escapeHTML(message)}</div>`)
@@ -300,7 +284,7 @@ function edit() {
 }
 
 async function processFiles() {
-  if (state.busy || state.demo) return;
+  if (state.busy) return;
   state.busy = true;
   const pending = state.files.filter((file) => file.status !== "done");
   try {
@@ -348,12 +332,6 @@ async function changeCategory(file, kind) {
     render();
     return;
   }
-  if (state.demo) {
-    file.result.type = kind === "auto" ? file.result.detected_type : kind;
-    file.result.reviewed = false; file.result.auto_document_verified = false;
-    render();
-    return;
-  }
   state.busy = true;
   render();
   try {
@@ -397,11 +375,11 @@ async function exportPacket(formatType) {
   const result = {
     ...packet(),
     exported_at: new Date().toISOString(),
-    demo: state.demo,
+    demo: false,
   };
   try {
     downloadPacket(formatType === "json" ? JSON.stringify(result, null, 2) : packetCSV(result),
-                   formatType, state.demo);
+                   formatType);
   } catch (error) {
     toast(error.message);
   }
@@ -536,78 +514,6 @@ $("process").onclick = processFiles;
 $("applicant-id").oninput = renderSummary;
 $("export-json").onclick = () => exportPacket("json");
 $("export-csv").onclick = () => exportPacket("csv");
-
-$("demo").onclick = () => {
-  if (state.busy) return;
-  clearFiles();
-  state.demo = true;
-  state.tab = "data";
-  state.page = 0;
-  const grades = [
-    ["Русский язык", 5],
-    ["Литература", 4],
-    ["Алгебра", 5],
-    ["Геометрия", 4],
-    ["История", 5],
-    ["Биология", 4],
-  ].map(([subject, grade]) => ({
-    subject,
-    grade,
-    confidence: 1,
-    source: "Демонстрационный пример",
-    conflict: false,
-  }));
-  const base = {
-    grades: [],
-    achievement: "",
-    points: null,
-    warnings: [],
-    pages: [],
-    ocr_lines: [],
-    identifier_candidates: [],
-    reviewed: false,
-    series_not_present: false,
-  };
-  state.files = [
-    {
-      id: crypto.randomUUID(),
-      name: "Пример · аттестат за 9 классов",
-      kind: "certificate_9",
-      status: "done",
-      result: {
-        ...structuredClone(base),
-        type: "certificate_9",
-        detected_type: "certificate_9",
-        document_series: "АБ",
-        document_number: "0012345",
-        grades,
-        text:
-          "ДЕМОНСТРАЦИОННЫЙ ПРИМЕР\nАттестат об основном общем образовании\nСерия АБ Номер 0012345\n" +
-          grades.map((row) => `${row.subject} ${row.grade}`).join("\n"),
-      },
-    },
-    {
-      id: crypto.randomUUID(),
-      name: "Пример · диплом бакалавра",
-      kind: "diploma_bachelor",
-      status: "done",
-      result: {
-        ...structuredClone(base),
-        type: "diploma_bachelor",
-        detected_type: "diploma_bachelor",
-        document_series: "107724",
-        document_number: "0001234",
-        text: "ДЕМОНСТРАЦИОННЫЙ ПРИМЕР\nДиплом бакалавра\nСерия 107724\nНомер 0001234",
-      },
-    },
-  ];
-  state.selected = state.files[0].id;
-  render();
-  $("workspace").scrollIntoView({block: "start"});
-  toast(
-    "Это заранее заданный пример. Загрузите сканы для настоящего распознавания.",
-  );
-};
 
 if (browserMode) $("engine").textContent = "Один OCR · ручная сверка";
 else fetch("/api/health")

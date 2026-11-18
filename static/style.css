@@ -56,9 +56,6 @@ p { line-height: 1.65; }
 .header-actions { display: flex; align-items: center; gap: 30px; }
 .local-label { display: inline-flex; align-items: center; gap: 8px; color: #647789; font-size: .8125rem; }
 .local-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--bright-blue); box-shadow: 0 0 0 4px #edf5ff; }
-.header-help { display: inline-flex; gap: 16px; align-items: center; font-size: .8125rem; font-weight: 650; color: var(--blue); text-decoration: none; }
-.header-help span { font-size: 1.3rem; }
-.header-help:hover { color: var(--pink); }
 .main-nav {
   max-width: 1480px; margin: auto; padding: 0 32px; display: flex;
   align-items: center; gap: 32px; min-height: 46px;
@@ -77,7 +74,6 @@ p { line-height: 1.65; }
 h1 { margin: 14px 0 16px; font-family: var(--display); font-weight: 850; font-size: clamp(2.2rem, 3.8vw, 3.4rem); line-height: 1.2; letter-spacing: -1.8px; color: #26333f; }
 h1 > span { color: var(--blue); }
 .hero-copy > p { font-size: .9375rem; line-height: 1.6; color: #4d6b84; }
-.hero-actions { display: flex; align-items: center; gap: 12px; margin-top: 23px; flex-wrap: wrap; }
 .button {
   min-height: 44px; padding: 12px 17px; border: 1px solid transparent; border-radius: 5px;
   display: inline-flex; align-items: center; justify-content: center; gap: 16px;
@@ -88,8 +84,6 @@ h1 > span { color: var(--blue); }
 .primary:hover:enabled, a.primary:hover { background: #0053df; box-shadow: 0 4px 14px #005aaa1a; }
 .secondary { border-color: #b8cfe3; background: white; color: var(--blue); }
 .secondary:hover:enabled { border-color: var(--blue); background: #f0f7ff; }
-.hero-demo { border-color: #8db9dd; color: var(--blue); background: #ffffff30; }
-.hero-demo:hover:enabled { background: #fff9; border-color: var(--blue); }
 .small { min-height: 38px; padding: 8px 15px; }
 .full { width: 100%; }
 .hero-formats { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 18px; font-size: .625rem; color: #57748e; }
@@ -195,7 +189,6 @@ h1 > span { color: var(--blue); }
 .review-actions .button { font-size: .75rem; }
 .raw-text { max-height: 570px; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; font-size: .8125rem; line-height: 1.85; color: #52718b; }
 .progress { padding: 30px 5px; color: #4b769a; font-size: .8125rem; line-height: 1.8; }
-.demo-label { margin-bottom: 13px; padding: 9px 11px; border: 1px solid #c5dff7; border-radius: 5px; background: #eef7ff; color: #487da7; font-size: .6875rem; }
 .packet-summary { display: flex; align-items: center; justify-content: space-between; gap: 26px; margin-top: 22px; padding: 27px 25px; border: 1px solid #c8e0f5; border-radius: 9px; background: linear-gradient(110deg, #e2f0ff, #e1f7ff); }
 .packet-summary > div:first-child { flex: 1; }
 .packet-summary h2 { margin: 9px 0 8px; font-family: var(--display); font-size: .9375rem; font-weight: 700; letter-spacing: -.35px; color: var(--blue); }
@@ -239,7 +232,6 @@ footer strong { color: var(--blue); font-family: var(--display); font-size: .937
   h1 { font-size: 2.65rem; }
   .hero-graphic { opacity: .88; }
   .hero-copy > p { font-size: .875rem; }
-  .hero-actions { gap: 9px; }
   .hero-formats { line-height: 1.7; max-width: 330px; }
   .hero-formats > span { display: none; }
   .workspace { grid-template-columns: 270px minmax(0, 1fr); gap: 16px; }
@@ -261,7 +253,6 @@ footer strong { color: var(--blue); font-family: var(--display); font-size: .937
   .brand-mark { width: 31px; height: 36px; }
   .brand-caption { font-size: .5rem; letter-spacing: .65px; }
   .brand-divider { height: 24px; margin: 0 1px; }
-  .header-help { display: none; }
   .local-label { max-width: 110px; font-size: .625rem; line-height: 1.4; }
   .local-dot { width: 5px; height: 5px; flex-shrink: 0; }
   .main-nav { min-height: 43px; padding: 0 18px; gap: 22px; overflow-x: auto; scrollbar-width: none; }
@@ -273,8 +264,6 @@ footer strong { color: var(--blue); font-family: var(--display); font-size: .937
   h1 { margin: 14px 0; font-size: clamp(2.1rem, 8vw, 3rem); letter-spacing: -1.25px; }
   .hero-copy > p { max-width: 340px; font-size: .8125rem; }
   .hero-graphic { display: none; }
-  .hero-actions { margin-top: 20px; }
-  .hero-actions .button { min-height: 43px; padding: 11px 13px; font-size: .6875rem; gap: 10px; }
   .hero-formats { max-width: none; display: block; margin-top: 16px; font-size: .5625rem; }
   .hero-formats > span { display: inline-block; margin: 0 8px 2px; width: 2px; height: 2px; }
   .main-content { padding: 24px 16px 0; }

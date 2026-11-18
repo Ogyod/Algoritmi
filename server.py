@@ -13,9 +13,9 @@ import subprocess
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from PIL import Image, ImageOps, ImageFilter, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 import pypdfium2 as pdfium
-from core import DOCUMENT_TYPES, interpret, interpret_lines
+from core import DOCUMENT_TYPES, interpret_lines
 from ocr_engines import recognize_document, MODEL_ROOT
 from ocr_process import shutdown_workers
 from ocr_adapter import parse_engine_rows, interpret_consensus
@@ -53,11 +53,35 @@ def engine():
 
 def recognize(images, kind='auto'):
     return recognize_document(images, parser=parse_engine_rows, include_observations=True,
-                              requested_type=kind)
+                              requested_type=kind,
+                              fast_third=os.environ.get('OCR_FULL_THIRD') != '1')
 
 
 def process(data, kind):
     return process_group([('upload', data)], kind)
+
+
+def pdf_render_scale(page, width, height):
+    scale = min(300 / 72, 3600 / width, 4800 / height)
+    try:
+        objects = list(page.get_objects())
+        if len(objects) != 1 or not isinstance(objects[0], pdfium.PdfImage):
+            return scale
+        image = objects[0]
+        left, bottom, right, top = image.get_bounds()
+        image_width, image_height = right - left, top - bottom
+        if image_width <= 0 or image_height <= 0 or image_width * image_height < .8 * width * height:
+            return scale
+        pixels_width, pixels_height = image.get_px_size()
+        if pixels_width <= 0 or pixels_height <= 0:
+            return scale
+        native_dpi = 72 * max(pixels_width / image_width, pixels_height / image_height)
+        if native_dpi <= 180:
+            return min(scale, 200 / 72)
+    except Exception:
+        # An optional size check must never prevent a valid PDF from rendering.
+        pass
+    return scale
 
 
 def process_group(files, kind):
@@ -99,7 +123,7 @@ def process_group(files, kind):
                             w, h = page.get_size()
                             if w <= 0 or h <= 0:
                                 raise ValueError('Некорректный размер страницы PDF.')
-                            bitmap = page.render(scale=min(300/72, 3600/w, 4800/h))
+                            bitmap = page.render(scale=pdf_render_scale(page, w, h))
                             try:
                                 handle_image(bitmap.to_pil(), i+1)
                             finally:
@@ -165,7 +189,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.integration_request()
         if self.path == '/api/health':
             return self.send(200, {'ok': True, 'app': 'admissions-document-processor', 'engine': engine(), 'max_bytes': MAX_BYTES,
-                                   'ocr_ready': getattr(self.server, 'ocr_ready', False)})
+                                   'ocr_ready': getattr(self.server, 'ocr_ready', False),
+                                   'docling_ready': getattr(self.server, 'docling_ready', False)})
         files = {'/': ('index.html', 'text/html; charset=utf-8'),
                  '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                  '/domain.js': ('domain.js', 'text/javascript; charset=utf-8'),
@@ -307,10 +332,12 @@ def main():
     parser.add_argument('--open', action='store_true', help='Open the local interface in the browser')
     args = parser.parse_args()
     server = make_server(args.port)
-    from ocr_engines import warmup
+    from ocr_engines import warmup, warmup_docling
     def prepare():
         server.ocr_ready = all(warmup().values())
         print('OCR: готов к обработке' if server.ocr_ready else 'OCR: проверьте локальные модели', flush=True)
+        server.docling_ready = warmup_docling()
+        print('Docling: готов к обработке' if server.docling_ready else 'Docling: проверьте локальные модели', flush=True)
     threading.Thread(target=prepare, daemon=True, name='ocr-warmup').start()
     print(f'Приём · Документы: http://127.0.0.1:{args.port}', flush=True)
     print(f'OCR: {engine() or "не настроен"}', flush=True)

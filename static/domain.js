@@ -86,15 +86,16 @@ export function reviewError(result) {
   if (!result || !Object.hasOwn(DOCUMENT_TYPES, result.type))
     return "Выберите категорию документа.";
   if (isEducation(result.type)) {
-    if (!/^\d{5,20}$/.test(result.document_number))
+    if (typeof result.document_number !== "string" ||
+        (result.document_number && !/^\d{5,20}$/.test(result.document_number)))
       return "Проверьте номер: от 5 до 20 цифр. Начальные нули сохраняются.";
+    if (typeof result.document_series !== "string")
+      return "Проверьте серию документа.";
     if (
       result.document_series.trim() &&
       !/^[\p{L}\p{N} -]{1,20}$/u.test(result.document_series)
     )
       return "Проверьте серию: только буквы, цифры, пробелы и дефис, до 20 знаков.";
-    if (!result.document_series.trim() && !result.series_not_present)
-      return "Введите серию или отметьте, что она не указана на документе.";
     if (result.series_not_present && result.document_series.trim())
       return "Уберите отметку об отсутствии серии или очистите поле серии.";
     if (

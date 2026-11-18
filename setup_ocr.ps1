@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 New-Item -ItemType Directory -Force -Path '.ocr-tmp' | Out-Null
 $env:TEMP = Join-Path $PSScriptRoot '.ocr-tmp'

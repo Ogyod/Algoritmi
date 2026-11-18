@@ -1,4 +1,4 @@
-param([int]$Port = 8765)
+﻿param([int]$Port = 8765)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 $ocrPython = Join-Path $PSScriptRoot '.ocr-venv/Scripts/python.exe'

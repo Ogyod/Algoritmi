@@ -1,6 +1,5 @@
 """Bounded, local OCR subprocesses. Downloads are an explicit setup operation."""
 from concurrent.futures import ThreadPoolExecutor
-import json
 import hashlib
 import os
 from pathlib import Path
@@ -8,8 +7,8 @@ import subprocess
 import sys
 import time
 from queue import Empty
-from ocr_process import worker, shutdown_workers
-from ocr_consensus import reconcile, needs_third
+from ocr_process import worker
+from ocr_consensus import OCR_THRESHOLD, reconcile, needs_third
 from core import CERTIFICATE_TYPES, DOCUMENT_TYPES, classify, extract_identifiers, normalize
 from ocr_consensus import normalized
 
@@ -93,7 +92,22 @@ def agreed_non_grade_page(observations, requested_type):
                 for item in identifiers))
 
 
-def run_docling(pages):
+def agreed_certificate_cover_page(observations):
+    """An appendix cover with an agreed number has no grade table to reread."""
+    if any(not o['ok'] or not o['lines'] for o in observations):
+        return False
+    texts = [normalize(' '.join(line['text'] for line in o['lines'])) for o in observations]
+    if not any('приложение' in text and 'аттестат' in text for text in texts):
+        return False
+    if any('итоговые оценки' in text or 'наименование учебных предметов' in text
+           for text in texts):
+        return False
+    identifiers = [extract_identifiers(o['lines'])[0] for o in observations]
+    return (bool(identifiers[0]['document_number']) and
+            all(item['document_number'] == identifiers[0]['document_number'] for item in identifiers))
+
+
+def run_docling(pages, timeout=None):
     """Docling supplies review suggestions, never an independent OCR vote."""
     try:
         process = worker('docling', [worker_python(), '-u', '-X', 'utf8',
@@ -102,12 +116,18 @@ def run_docling(pages):
                           'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1',
                           'HF_HUB_DISABLE_TELEMETRY': '1'})
         response = process.call({'pages': pages, 'models': str(MODEL_ROOT)},
-                                timeout=120 + 60 * len(pages))
+                                timeout=timeout or 120 + 60 * len(pages))
         if response.get('ok'):
             return response
     except (OSError, ValueError, Empty, subprocess.SubprocessError):
         pass
     return {'ok': False, 'rows': [], 'error': 'Docling недоступен. Проверьте подготовку моделей.'}
+
+
+def warmup_docling():
+    """Run the real image pipeline once, then keep its worker and models in memory."""
+    sample = ROOT / 'samples/certificate_9.png'
+    return sample.is_file() and run_docling([{'page': 1, 'path': str(sample)}], timeout=300)['ok']
 
 
 def add_docling_suggestions(rows, table_rows, parser):
@@ -131,11 +151,14 @@ def add_docling_suggestions(rows, table_rows, parser):
                 if not existing['auto_verified'] and 'docling' not in existing['votes']:
                     existing['votes']['docling'] = evidence
                     existing['suggested_grade'] = suggested
+                    if existing['grade'] is None:
+                        existing['grade'] = suggested
+                        existing['conflict'] = False
                     hints += 1
                 continue
-            row = {**candidate, 'grade': None, 'confidence': 0, 'auto_verified': False,
+            row = {**candidate, 'grade': suggested, 'confidence': 0, 'auto_verified': False,
                    'verified': False, 'verification': 'manual_required',
-                   'consensus_status': 'unresolved', 'conflict': True,
+                   'consensus_status': 'unresolved', 'conflict': False,
                    'issue': 'Найдена таблицей Docling. Сверьте предмет и оценку со сканом.',
                    'votes': {'docling': evidence},
                    'supporting_engines': [], 'suggested_grade': suggested,
@@ -148,13 +171,31 @@ def add_docling_suggestions(rows, table_rows, parser):
     return added, hints
 
 
+def needs_table_suggestions(rows):
+    """A table pass helps only when OCR has too little numeric row evidence."""
+    if not rows:
+        return True
+    # A populated subject table needs grade review, not another full-page
+    # layout model. Docling cannot provide an independent OCR quorum.
+    if len(rows) >= 8:
+        return False
+    for row in rows:
+        if row['auto_verified']:
+            continue
+        numeric = sum(type(v.get('grade')) is int and not v.get('conflict')
+                      for name, v in row.get('votes', {}).items() if name != 'docling')
+        if numeric < 2:
+            return True
+    return False
+
+
 def recognize_document(pages, runner=None, parser=None, include_observations=False,
-                       requested_type='auto', docling_runner=None):
+                       requested_type='auto', docling_runner=None, fast_third=False):
     runner = runner or run_engine
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(runner, engine, pages) for engine in ('rapidocr', 'tesseract')]
         observations = [f.result() for f in futures]
-    threshold = .75
+    threshold = OCR_THRESHOLD
     first_rows = reconcile(observations, threshold, parser)
     contested = {r['page'] for r in first_rows if not r['auto_verified']}
     # Pages with no candidates, or a failed primary engine, also need another reading.
@@ -164,7 +205,8 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
         page_observations = [{**o, 'lines': [line for line in o['lines'] if line['page'] == page['page']]} for o in observations]
         page_rows = reconcile(page_observations, threshold, parser)
         if needs_third(page_observations, page_rows) and not (
-                not page_rows and agreed_non_grade_page(page_observations, requested_type)):
+                not page_rows and (agreed_non_grade_page(page_observations, requested_type)
+                                   or agreed_certificate_cover_page(page_observations))):
             contested.add(page['page'])
     if contested:
         third_pages = []
@@ -173,26 +215,32 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
                 continue
             regions = []
             line_regions = []
+            detect_regions = []
             for row in first_rows:
                 if row['page'] != page['page'] or row['auto_verified']:
                     continue
                 boxes = [v['box'] for v in row['votes'].values() if v.get('box')]
                 if boxes:
-                    left, top = min(b[0] for b in boxes), min(b[1] for b in boxes)
-                    right, bottom = max(b[2] for b in boxes), max(b[3] for b in boxes)
+                    # OCR can merge several table rows into a tall box. The
+                    # smallest complete reading is the useful third-reader crop.
+                    left, top, right, bottom = min(
+                        boxes, key=lambda b: max(1, b[2]-b[0]) * max(1, b[3]-b[1]))
                     margin = max(12, int((bottom - top) * .7))
                     regions.append([left - margin, top - margin, right + margin, bottom + margin])
                     padding = max(2, int((bottom - top) * .12))
                     line_regions.append([left-padding, top-padding, right+padding, bottom+padding])
-            third_pages.append({**page, 'regions': regions, 'line_regions': line_regions})
+                    numeric = any(type(v.get('grade')) is int and not v.get('conflict')
+                                  for v in row['votes'].values())
+                    detect_regions.append(not fast_third or not numeric)
+            third_pages.append({**page, 'regions': regions, 'line_regions': line_regions,
+                                'detect_regions': detect_regions})
         observations.append(runner('easyocr', third_pages))
     rows = reconcile(observations, threshold, parser) if contested else first_rows
     docling = {'used': False, 'ok': False, 'suggested': 0, 'hints': 0}
     document_text = '\n'.join(line['text'] for o in observations[:2] if o['ok'] for line in o['lines'])
     relevant = requested_type in CERTIFICATE_TYPES or (requested_type == 'auto' and
                 classify(document_text) in CERTIFICATE_TYPES | {'education_unknown'})
-    if relevant and (runner is run_engine or docling_runner is not None) and (
-            not rows or any(not row['auto_verified'] for row in rows)):
+    if relevant and (runner is run_engine or docling_runner is not None) and needs_table_suggestions(rows):
         uncertain = {row['page'] for row in rows if not row['auto_verified']}
         target_pages = [page for page in pages if page['page'] in uncertain]
         if not target_pages:

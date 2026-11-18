@@ -27,6 +27,7 @@ def parse_engine_rows(lines):
         parsed = canonical[0]
         conflict = row['conflict'] or parsed['conflict']
         result.append({**row, **parsed, 'grade': None if conflict else parsed['grade'],
+                       'confidence': min(row['confidence'], 1 if parsed['known_subject'] else .5),
                        'conflict': conflict, 'page': row['page'], 'box': row.get('box')})
     # Preserve additional unreadable/unknown rows found by the project's original parser.
     covered = {(row['page'], normalized(row['subject'])) for row in result}
@@ -34,6 +35,8 @@ def parse_engine_rows(lines):
         line = next((line for line in lines if line['text'] == parsed['source']), None)
         if line and (line['page'], normalized(parsed['subject'])) not in covered:
             result.append({**parsed, 'page': line['page'], 'box': line.get('box'),
+                           'confidence': min(float(line.get('confidence', 0)),
+                                             1 if parsed['known_subject'] else .5),
                            'verified': False, 'include': True, 'reason': ''})
             covered.add((line['page'], normalized(parsed['subject'])))
     return result
@@ -64,29 +67,28 @@ def interpret_consensus(recognition, kind='auto'):
                 message += ' Расхождения проверены третьим распознавателем EasyOCR.'
             if result['average'] is not None:
                 message += ' Средний балл рассчитан автоматически.'
-            matching = [candidate for candidate in candidates
-                        if candidate['type'] == result['type']
-                        and candidate.get('document_number') == result.get('document_number')
-                        and candidate.get('document_series', '') == result.get('document_series', '')]
+            matching = [candidate for candidate in candidates if candidate['type'] == result['type']]
+            numbers = {candidate['document_number'] for candidate in matching if candidate.get('document_number')}
+            series = {candidate['document_series'] for candidate in matching if candidate.get('document_series')}
             result['auto_document_verified'] = (result['type'] in CERTIFICATE_TYPES
-                                                and bool(result.get('document_number'))
-                                                and len(matching) >= 2)
+                                                and len(matching) >= 2
+                                                and len(numbers) <= 1 and len(series) <= 1)
             message += (' Документ принят автоматически.' if result['auto_document_verified'] else
-                        ' Реквизиты не согласованы двумя OCR: проверьте их отдельно.')
+                        ' Категория или прочитанные реквизиты расходятся: проверьте их отдельно.')
             result['warnings'].append(message)
         elif result['grades']:
-            result['warnings'].append(f"Нет согласия двух OCR для {recognition['ocr']['unresolved']} строк. Варианты движков доступны в подсказке строки; спорные оценки заполните по скану.")
+            result['warnings'].append(
+                f"Нет согласия двух OCR для {recognition['ocr']['unresolved']} строк. "
+                'Прочитанные оценки подставлены предварительно; проверьте жёлтые строки по скану.')
         else:
             result['warnings'].append('Оценки не согласованы. Загрузите приложение с оценками или внесите строки вручную.')
     result['warnings'].extend(o['error'] for o in recognition['observations'] if not o['ok'])
     if result['docling']['suggested']:
-        result['warnings'].append(f"Docling нашёл ещё {result['docling']['suggested']} строк(и) таблицы. Сверьте их со сканом и заполните оценки вручную.")
+        result['warnings'].append(f"Docling нашёл ещё {result['docling']['suggested']} строк(и) таблицы. Сверьте их со сканом.")
     if result['docling']['hints']:
-        result['warnings'].append('В подсказках спорных строк есть вариант Docling. Он требует проверки по скану.')
+        result['warnings'].append('Docling также проверил спорные строки. Сверьте подставленные оценки со сканом.')
     elif result['docling']['used'] and not result['docling']['ok']:
         result['warnings'].append('Docling не смог проверить сложную таблицу. Сверьте её со сканом.')
-    # Automatic grade agreement does not claim that series, number or category were manually reviewed.
+    # Missing identifiers do not block an agreed certificate; conflicting readings still do.
     result['reviewed'] = result['auto_document_verified']
-    if result['auto_document_verified'] and not result.get('document_series'):
-        result['series_not_present'] = True
     return result

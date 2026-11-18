@@ -185,11 +185,11 @@ class BatchService:
                 series = result.get('document_series', '')
                 number = result.get('document_number', '')
                 absent = result.get('series_not_present') is True
-                if (not isinstance(number, str) or not re.fullmatch(r'\d{5,20}', number) or
+                if (not isinstance(number, str) or (number and not re.fullmatch(r'\d{5,20}', number)) or
                         not isinstance(series, str) or len(series) > 20 or
                         (series and not re.fullmatch(r'[\w -]+', series)) or
-                        (not series.strip() and not absent) or (series.strip() and absent)):
-                    raise Problem('Проверьте серию и номер документа; отсутствие серии подтвердите явно.')
+                        (series.strip() and absent)):
+                    raise Problem('Проверьте указанные серию и номер документа.')
             if data.get('complete') is True and kind == 'achievement':
                 points = result.get('points')
                 if not isinstance(result.get('achievement'), str) or not result['achievement'].strip() or type(points) not in (int, float) or not 0 <= points < float('inf'):

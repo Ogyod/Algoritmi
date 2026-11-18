@@ -7,7 +7,7 @@ const out = path.join(root, "dist");
 // Every module, worker, parser and model belongs to the same immutable release.
 // Browser caches must never combine a new interface with an old Python parser.
 const hash = createHash("sha256");
-const releaseFiles = ["core.py", "uploads.py", "subjects.json", "pnpm-lock.yaml", "scripts/build-site.mjs",
+const releaseFiles = ["core.py", "uploads.py", "subjects.json", "package-lock.json", "scripts/build-site.mjs",
   ...(await readdir(path.join(root, "static"))).map((name) => "static/" + name),
   ...(await readdir(path.join(root, ".models"))).map((name) => ".models/" + name)];
 for (const name of releaseFiles.sort()) {

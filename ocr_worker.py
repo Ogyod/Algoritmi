@@ -91,12 +91,19 @@ def recognize(engine, pages, models, download=False):
     if engine == 'rapidocr':
         manifest = models / 'rapid-ready.json'
         reader = rapid_reader(models, download)
-        for page in pages:
+        def recognize_page(page):
+            found = []
             result = reader(image_array(page['path'])[:, :, ::-1].copy())
             if result.boxes is None:
-                continue
+                return found
             for box, text, score in zip(result.boxes, result.txts, result.scores):
-                lines.append({'text': text, 'confidence': float(score), 'page': page['page'], 'box': rectangle(box)})
+                found.append({'text': text, 'confidence': float(score), 'page': page['page'], 'box': rectangle(box)})
+            return found
+        if len(pages) > 1 and os.environ.get('OCR_PAGE_WORKERS') != '1':
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                lines = [line for page_lines in pool.map(recognize_page, pages) for line in page_lines]
+        else:
+            lines = [line for page in pages for line in recognize_page(page)]
         if download:
             from rapidocr.inference_engine.base import FileInfo
             local = {}
@@ -128,6 +135,12 @@ def recognize(engine, pages, models, download=False):
                         from ocr_consensus import GRADE_END
                         if (attempted and all(float(item[2]) >= .75 and GRADE_END.match(item[1].strip())
                                               for item in attempted)):
+                            answer = attempted
+                            x0, y0 = left, top
+                        elif index < len(page.get('detect_regions', [])) and not page['detect_regions'][index]:
+                            # The first two readers already supplied a numeric grade.
+                            # Keep this independent direct reading for review without
+                            # paying for another full text detector on the same row.
                             answer = attempted
                             x0, y0 = left, top
                 if answer is None:

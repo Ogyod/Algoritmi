@@ -83,13 +83,13 @@ export async function reinterpretDocument(lines, kind) {
     : requestJSON("/api/reinterpret", {lines, type: kind});
 }
 
-export function downloadPacket(content, format, demo) {
+export function downloadPacket(content, format) {
   const url = URL.createObjectURL(new Blob([content], {
     type: format === "json" ? "application/json;charset=utf-8" : "text/csv;charset=utf-8",
   }));
   const link = document.createElement("a");
   link.href = url;
-  link.download = (demo ? "demo-result" : "admissions-result") + "." + format;
+  link.download = "admissions-result." + format;
   document.body.appendChild(link);
   link.click();
   link.remove();

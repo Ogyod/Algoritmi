@@ -1,5 +1,4 @@
 """Explicit download/verification of local models, using a synthetic project sample."""
-import json
 from pathlib import Path
 from PIL import Image
 from ocr_worker import recognize

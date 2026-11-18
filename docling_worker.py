@@ -35,7 +35,7 @@ def converter_for(models):
     options.do_table_structure = True
     options.table_structure_options = TableStructureOptions(mode=TableFormerMode.FAST)
     options.ocr_options = RapidOcrOptions(
-        mode=OcrMode.FULL_PAGE, lang=['ru'], scale=2.0,
+        mode=OcrMode.FULL_PAGE, lang=['iso:ru'], scale=1.0,
         det_model_path=str(paths[0]), cls_model_path=str(paths[1]),
         rec_model_path=str(paths[2]))
     options.accelerator_options.num_threads = 2

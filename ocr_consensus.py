@@ -7,6 +7,7 @@ import re
 import unicodedata
 
 WORDS = {'отлично': 5, 'хорошо': 4, 'удовлетворительно': 3, 'неудовлетворительно': 2}
+OCR_THRESHOLD = .70
 WORD_PATTERN = '|'.join(sorted(WORDS, key=len, reverse=True))
 GRADE_END = re.compile(r'^(.+?)\s+(?:([2-5зЗ?])(?:\s*\(?(' + WORD_PATTERN + r')\)?)?|(' + WORD_PATTERN + r'))\s*[.;,]?$', re.I)
 SUBJECT_HINTS = ('математик', 'алгебр', 'геометри', 'русский язык', 'литератур', 'истори', 'обществознан',
@@ -84,7 +85,7 @@ def parse_lines(lines, subject_hints=()):
         if re.search(r'\s[2-5](?:\s|\()', subject):
             grade, conflict = None, True
         result.append({'subject': subject, 'grade': grade, 'include': True, 'reason': '', 'verified': False,
-                       'confidence': round(float(line.get('confidence', 0)), 4), 'page': line['page'],
+                       'confidence': float(line.get('confidence', 0)), 'page': line['page'],
                        'box': line.get('box'), 'source': text, 'conflict': conflict})
     return result
 
@@ -102,7 +103,7 @@ def _same_row(first, second):
     return abs((left[1] + left[3] - right[1] - right[3]) / 2) < height * .7 and abs(left[0] - right[0]) < height * 4
 
 
-def reconcile(observations, threshold=.75, parser=None):
+def reconcile(observations, threshold=OCR_THRESHOLD, parser=None):
     """One vote per engine; a quorum requires the same subject AND grade."""
     parser = parser or parse_lines
     buckets = []
@@ -129,7 +130,15 @@ def reconcile(observations, threshold=.75, parser=None):
         winning_votes = {name: v for name, v in bucket['votes'].items()
                          if accepted and (normalized(v['subject']), v['grade']) == winner
                          and v['confidence'] >= threshold and not v['conflict']}
-        chosen = max(winning_votes.values(), key=lambda v: v['confidence']) if winning_votes else bucket['anchor']
+        numeric_votes = [v for v in bucket['votes'].values()
+                         if type(v['grade']) is int and not v['conflict']]
+        grade_counts = Counter(v['grade'] for v in numeric_votes)
+        grade_confidence = {grade: sum(v['confidence'] for v in numeric_votes if v['grade'] == grade)
+                            for grade in grade_counts}
+        suggested = max(numeric_votes, key=lambda v: (grade_counts[v['grade']],
+                         grade_confidence[v['grade']], v['confidence'])) if numeric_votes else None
+        chosen = (max(winning_votes.values(), key=lambda v: v['confidence']) if winning_votes else
+                  suggested or bucket['anchor'])
         row = dict(chosen)
         row['auto_verified'] = accepted
         row['verified'] = False
@@ -139,10 +148,8 @@ def reconcile(observations, threshold=.75, parser=None):
         row['supporting_engines'] = list(winning_votes)
         row['issue'] = '' if accepted else ('Повтор предмета в результате OCR.' if bucket['duplicate'] else
                                            'Нет двух уверенных совпадений предмета и оценки.')
-        if not accepted:
-            # Never publish an arbitrary candidate as the resolved numeric result.
-            row['grade'] = None
-        row['conflict'] = not accepted
+        # A single best OCR reading is visible for review, but never gains a quorum.
+        row['conflict'] = not accepted and suggested is None
         identity = {'page': row['page'], 'subject': row['subject'], 'votes': bucket['votes']}
         row['row_id'] = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:24]
         rows.append(row)

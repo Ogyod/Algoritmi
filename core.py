@@ -237,7 +237,7 @@ def extract_identifiers(lines):
         if candidates:
             warnings.append('Найдены разные реквизиты. Выберите нужные по скану и заполните серию и номер вручную.')
         else:
-            warnings.append('Серия и номер не найдены. Загрузите титульную страницу или заполните поля вручную.')
+            warnings.append('Серия и номер не найдены. Расчёт продолжен без этих реквизитов.')
     return {'document_series': series, 'document_number': number,
             'series_not_present': False, 'identifier_candidates': candidates}, warnings
 
