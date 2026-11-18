@@ -32,7 +32,7 @@ def run_engine(engine, pages):
         process = worker(engine, [worker_python(), '-u', '-X', 'utf8',
                                  str(ROOT / 'ocr_worker.py'), engine, '--serve'],
                          {**os.environ, 'PYTHONIOENCODING': 'utf-8'})
-        result = process.call({'pages': pages, 'models': str(MODEL_ROOT)},
+        result = process.call({'pages': pages},
                               timeout=120 + 60 * len(pages))
         if not result.get('ok'):
             raise ValueError('Unavailable OCR engine')
@@ -88,6 +88,10 @@ def add_docling_suggestions(rows, table_rows, parser):
             evidence = {'grade': suggested, 'confidence': 0, 'source': text}
             if key in known:
                 existing = known[key]
+                if existing['auto_verified'] and existing['grade'] != suggested:
+                    existing.update(auto_verified=False, verification='manual_required',
+                                    consensus_status='unresolved', supporting_engines=[], conflict=True,
+                                    issue='Структура таблицы и распознанная оценка расходятся.')
                 if not existing['auto_verified'] and 'docling_table' not in existing['votes']:
                     existing['votes']['docling_table'] = evidence
                     existing['suggested_grade'] = suggested
@@ -111,7 +115,7 @@ def add_docling_suggestions(rows, table_rows, parser):
     return added, hints
 
 
-def usable_page(page, parser, requested_type):
+def usable_page(page, parser, requested_type, embedded_text=False):
     lines = page['lines']
     if not page['complete'] or not any(any(c.isalpha() for c in line['text']) for line in lines):
         return False
@@ -122,8 +126,12 @@ def usable_page(page, parser, requested_type):
     rows = reconcile([{'ok': True, 'engine': 'docling', 'lines': lines}], parser=parser)
     if requested_type not in ('auto', detected) and detected in DOCUMENT_TYPES:
         return False
+    grade_heading = ('итоговые оценки' in normalize(text) or
+                     'наименование учебных предметов' in normalize(text))
     if rows:
-        if not page['table'] and len(rows) < 8:
+        if embedded_text and not grade_heading:
+            return False
+        if not page['table'] and len(rows) < 8 and not embedded_text:
             return False
         if any(not row['auto_verified'] for row in rows):
             return False
@@ -133,7 +141,7 @@ def usable_page(page, parser, requested_type):
                 if (normalized(row['subject']), row['grade']) not in pairs:
                     return False
         return True
-    if 'итоговые оценки' in normalize(text) or 'наименование учебных предметов' in normalize(text):
+    if grade_heading:
         return False
     if detected == 'achievement':
         return True
@@ -146,16 +154,28 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
                        requested_type='auto', docling_runner=None):
     parser = parser or parse_lines
     runner = runner or run_engine
-    response = (docling_runner or run_docling)(pages)
+    digital = [p['pdf_reading'] for p in pages if 'pdf_reading' in p]
+    scans = [p for p in pages if 'pdf_reading' not in p]
+    observations = []
+    if digital:
+        observations.append({'engine': 'pdf_text', 'ok': True, 'error': '',
+                             'lines': [line for p in digital for line in p['lines']]})
+    started = time.perf_counter()
+    response = (docling_runner or run_docling)(scans) if scans else {}
+    docling_seconds = round(time.perf_counter() - started, 3) if scans else 0
     by_page = {p['page']: p for p in response.get('pages', [])}
-    primary = [line for page in pages for line in by_page.get(page['page'], {}).get('lines', [])]
-    observations = [{'engine': 'docling', 'ok': bool(primary), 'lines': primary,
-                     'error': '' if primary else 'Docling не прочитал текст.'}]
-    fallback = [page for page in pages if page['page'] not in by_page
+    primary = [line for p in by_page.values() for line in p['lines']]
+    if scans:
+        observations.append({'engine': 'docling', 'ok': bool(primary), 'lines': primary,
+                             'error': '' if primary else 'Docling не прочитал текст.'})
+    fallback = [page for page in scans if page['page'] not in by_page
                 or not usable_page(by_page[page['page']], parser, requested_type)]
+    tesseract_seconds = 0
     incomplete = []
     if fallback:
+        started = time.perf_counter()
         secondary = runner('tesseract', fallback)
+        tesseract_seconds = round(time.perf_counter() - started, 3)
         observations.append(secondary)
         read_pages = {line['page'] for line in secondary['lines'] if line['text'].strip()}
         incomplete = [p['page'] for p in fallback if p['page'] not in read_pages]
@@ -168,10 +188,12 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
                            for o in observations],
                'first_only': not fallback, 'third_used': False, 'third_pages': [],
                'fallback_pages': [p['page'] for p in fallback], 'incomplete_pages': incomplete,
+               'pdf_text_pages': [p['page'] for p in digital],
+               'timing_seconds': {'docling': docling_seconds, 'tesseract': tesseract_seconds},
                'threshold': OCR_THRESHOLD, 'accepted': accepted, 'unresolved': len(rows) - accepted,
                'status': 'accepted' if rows and accepted == len(rows) and not incomplete else 'needs_review'}
     result = {'grades': rows, 'ocr': summary, 'docling': {
-        'used': True, 'ok': bool(primary), 'pages': [p['page'] for p in pages],
+        'used': bool(scans), 'ok': bool(primary), 'pages': [p['page'] for p in scans],
         'suggested': added, 'hints': hints}}
     if include_observations:
         result['observations'] = observations

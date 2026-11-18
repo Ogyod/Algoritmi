@@ -3,13 +3,15 @@ import base64
 import io
 from pathlib import Path
 import tempfile
+from time import perf_counter
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 import pypdfium2 as pdfium
+import pypdfium2.raw as pdfium_raw
 
 from core import DOCUMENT_TYPES
 from ocr_adapter import parse_engine_rows, interpret_consensus
-from ocr_engines import recognize_document
+from ocr_engines import recognize_document, usable_page
 from uploads import MAX_FILE
 
 MAX_PAGES = 20
@@ -48,23 +50,47 @@ def pdf_render_scale(page, width, height):
     return scale
 
 
+def read_pdf_text(page, number, kind):
+    """Use the text layer on pages without scanned images."""
+    try:
+        if any(page.get_objects(filter=[pdfium_raw.FPDF_PAGEOBJ_IMAGE])):
+            return None
+        text_page = page.get_textpage()
+        try:
+            text = text_page.get_text_bounded()
+        finally:
+            text_page.close()
+    except pdfium.PdfiumError:
+        return None
+    if '\ufffd' in text:
+        return None
+    lines = [{'page': number, 'text': line.strip(), 'confidence': 1.0}
+             for line in text.splitlines() if line.strip()]
+    reading = {'page': number, 'lines': lines, 'complete': True, 'table': []}
+    return reading if usable_page(reading, parse_engine_rows, kind, embedded_text=True) else None
+
+
 def process_group(files, kind):
     if not isinstance(kind, str) or (kind != 'auto' and kind not in DOCUMENT_TYPES):
         raise ValueError('Неизвестный тип документа.')
+    start = perf_counter()
     pages = []
     images = []
     with tempfile.TemporaryDirectory(prefix='admissions-') as temp:
-        def handle_image(image, source_name, source_page):
+        def handle_image(image, source_name, source_page, pdf_reading=None):
             number = len(pages) + 1
             if number > MAX_PAGES:
                 raise ValueError('В одном документе допускается до 20 страниц.')
             image = ImageOps.exif_transpose(image).convert('RGB')
             image.thumbnail((3600, 4800))
-            path = Path(temp) / f'{number}.png'
-            image.save(path, compress_level=1)
-            enhanced = Path(temp) / f'{number}-enhanced.png'
-            images.append({'page': number, 'path': str(path), 'enhanced_path': str(enhanced),
-                           'width': image.width, 'height': image.height})
+            if pdf_reading is not None:
+                images.append({'page': number, 'pdf_reading': pdf_reading})
+            else:
+                path = Path(temp) / f'{number}.png'
+                image.save(path, compress_level=1)
+                enhanced = Path(temp) / f'{number}-enhanced.png'
+                images.append({'page': number, 'path': str(path), 'enhanced_path': str(enhanced),
+                               'width': image.width, 'height': image.height})
             image.thumbnail((1000, 1400))
             buffer = io.BytesIO()
             image.save(buffer, 'JPEG', quality=83)
@@ -87,9 +113,11 @@ def process_group(files, kind):
                             w, h = page.get_size()
                             if w <= 0 or h <= 0:
                                 raise ValueError('Некорректный размер страницы PDF.')
-                            bitmap = page.render(scale=pdf_render_scale(page, w, h))
+                            reading = read_pdf_text(page, len(pages) + 1, kind)
+                            scale = min(1000 / w, 1400 / h) if reading else pdf_render_scale(page, w, h)
+                            bitmap = page.render(scale=scale)
                             try:
-                                handle_image(bitmap.to_pil(), source_name, i + 1)
+                                handle_image(bitmap.to_pil(), source_name, i + 1, reading)
                             finally:
                                 bitmap.close()
                         finally:
@@ -113,7 +141,15 @@ def process_group(files, kind):
                             handle_image(image.copy(), source_name, i + 1)
                 except (UnidentifiedImageError, Image.DecompressionBombError, OSError):
                     raise ValueError('Не удалось прочитать изображение. Используйте PDF, JPEG, PNG, TIFF или WEBP.')
+        prepared = perf_counter()
         recognized = recognize(images, kind)
+        interpreted = perf_counter()
         result = interpret_consensus(recognized, kind)
+        result['ocr']['timing_seconds'] = {
+            **recognized['ocr']['timing_seconds'],
+            'preparation': round(prepared - start, 3),
+            'interpretation': round(perf_counter() - interpreted, 3),
+            'total': round(perf_counter() - start, 3),
+        }
         result['pages'] = pages
     return result

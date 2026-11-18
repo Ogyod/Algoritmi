@@ -64,7 +64,7 @@ def interpret_consensus(recognition, kind='auto'):
     candidates.append(result)
     result['ocr'] = recognition['ocr']
     result['docling'] = recognition.get('docling', {'used': False, 'ok': False, 'suggested': 0, 'hints': 0})
-    names = {'docling': 'Docling', 'tesseract': 'Tesseract'}
+    names = {'pdf_text': 'Текст PDF', 'docling': 'Docling', 'tesseract': 'Tesseract'}
     result['engine'] = ' + '.join(names[o['engine']] for o in recognition['observations'] if o['ok']) or 'OCR недоступен'
     result['auto_grades_verified'] = False
     result['auto_document_verified'] = False
