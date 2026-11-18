@@ -45,26 +45,37 @@ def parse_engine_rows(lines):
 def interpret_consensus(recognition, kind='auto'):
     available = [o for o in recognition['observations'] if o['ok'] and o['lines']]
     candidates = [interpret_lines(o['lines'], kind) for o in available]
-    def usefulness(result):
-        return (8 * (result['type'] in DOCUMENT_TYPES) + 2 * bool(result['document_number'])
-                + bool(result['grades']))
-    result = max(candidates, key=usefulness) if candidates else interpret_lines([], kind)
+    # Select a reading per page so a fallback on page 2 retains the title on page 1.
+    combined = []
+    for page in sorted({line['page'] for o in available for line in o['lines']}):
+        readings = [[line for line in o['lines'] if line['page'] == page] for o in available]
+        def usefulness(lines):
+            info = interpret_lines(lines, kind)
+            return (info['detected_type'] in DOCUMENT_TYPES, bool(info['document_number']),
+                    len([r for r in info['grades'] if r['grade'] is not None]),
+                    sum(len(line['text']) * line['confidence'] for line in lines))
+        combined.extend(max(readings, key=usefulness))
+    result = interpret_lines(combined, kind)
+    matching = [candidate for candidate in candidates if candidate['type'] == result['type']]
+    for field in ('document_number', 'document_series'):
+        values = {candidate[field] for candidate in matching if candidate[field]}
+        if not result[field] and len(values) == 1:
+            result[field] = values.pop()
+    candidates.append(result)
     result['ocr'] = recognition['ocr']
     result['docling'] = recognition.get('docling', {'used': False, 'ok': False, 'suggested': 0, 'hints': 0})
-    names = {'rapidocr': 'PaddleOCR', 'tesseract': 'Tesseract', 'easyocr': 'EasyOCR'}
+    names = {'docling': 'Docling', 'tesseract': 'Tesseract'}
     result['engine'] = ' + '.join(names[o['engine']] for o in recognition['observations'] if o['ok']) or 'OCR недоступен'
     result['auto_grades_verified'] = False
     result['auto_document_verified'] = False
     if result['type'] in CERTIFICATE_TYPES or result['type'] == 'education_unknown':
         result['grades'] = recognition['grades']
-        accepted = bool(result['grades']) and all(row['auto_verified'] for row in result['grades'])
+        accepted = recognition['ocr']['status'] == 'accepted'
         result['auto_grades_verified'] = accepted
         result['average'] = mean_grade(result['grades']) if accepted and result['type'] in CERTIFICATE_TYPES else None
         result['warnings'] = [warning for warning in result['warnings'] if warning not in GRADE_WARNINGS]
         if accepted:
             message = 'Предметы и оценки приняты по уверенности OCR от 80%.'
-            if recognition['ocr']['third_used']:
-                message += ' Спорные строки дополнительно прочитал EasyOCR.'
             if result['average'] is not None:
                 message += ' Средний балл рассчитан автоматически.'
             matching = [candidate for candidate in candidates if candidate['type'] == result['type']]
@@ -80,19 +91,21 @@ def interpret_consensus(recognition, kind='auto'):
             message += (' Документ принят автоматически.' if result['auto_document_verified'] else
                         ' Категория или прочитанные реквизиты расходятся: проверьте их отдельно.')
             result['warnings'].append(message)
-        elif result['grades']:
+        elif result['grades'] and recognition['ocr']['unresolved']:
             result['warnings'].append(
                 f"Не приняты автоматически {recognition['ocr']['unresolved']} строк(и): уверенность ниже 80% или есть противоречие. "
                 'Прочитанные оценки подставлены предварительно; проверьте жёлтые строки по скану.')
-        else:
+        elif not result['grades']:
             result['warnings'].append('Оценки не найдены. Загрузите приложение с оценками или внесите строки вручную.')
     result['warnings'].extend(o['error'] for o in recognition['observations'] if not o['ok'])
     if result['docling']['suggested']:
         result['warnings'].append(f"Docling нашёл ещё {result['docling']['suggested']} строк(и) таблицы. Сверьте их со сканом.")
     if result['docling']['hints']:
         result['warnings'].append('Docling также проверил спорные строки. Сверьте подставленные оценки со сканом.')
-    elif result['docling']['used'] and not result['docling']['ok']:
-        result['warnings'].append('Docling не смог проверить сложную таблицу. Сверьте её со сканом.')
+    if recognition['ocr']['incomplete_pages']:
+        result['grades_need_review'] = True
+        numbers = ', '.join(map(str, recognition['ocr']['incomplete_pages']))
+        result['warnings'].append(f'Требуют сверки страницы: {numbers}. Повторное чтение не удалось.')
     # Missing identifiers do not block an agreed certificate; conflicting readings still do.
     result['reviewed'] = result['auto_document_verified']
     return result

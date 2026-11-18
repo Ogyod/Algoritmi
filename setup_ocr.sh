@@ -19,7 +19,7 @@ fi
 
 if [ "$(uname -s)" = Darwin ]; then
   .ocr-venv/bin/python -m pip install -r requirements.txt \
-    'rapidocr==3.10.0' 'onnxruntime==1.31.1' 'easyocr==1.7.2' \
+    'rapidocr==3.10.0' 'onnxruntime==1.31.1' \
     'torch==2.15.0' 'torchvision==0.29.2' 'docling==2.150.1'
 else
   .ocr-venv/bin/python -m pip install -r requirements-ocr.txt \

@@ -494,9 +494,7 @@ if (browserMode) $("engine").textContent = "Один OCR · порог 80%";
 else fetch("/api/health")
   .then((response) => response.json())
   .then((result) => {
-    $("engine").textContent = result.engine
-      ? result.engine.includes("PaddleOCR") ? "OCR · дополнительные при необходимости" : "Один OCR · порог 80%"
-      : "OCR требует настройки";
+    $("engine").textContent = result.engine || "OCR требует настройки";
   })
   .catch(() => ($("engine").textContent = "Нет связи с обработчиком"));
 render();

@@ -144,8 +144,7 @@ def reconcile(observations, threshold=OCR_THRESHOLD, parser=None):
         row['auto_verified'] = accepted
         row['verified'] = False
         row['verification'] = 'ocr_high_confidence' if accepted else 'manual_required'
-        row['consensus_status'] = ('third_resolved' if 'easyocr' in winning_votes else
-                                   'agreed' if len(winning_votes) > 1 else 'single_high_confidence') if accepted else 'unresolved'
+        row['consensus_status'] = ('agreed' if len(winning_votes) > 1 else 'single_high_confidence') if accepted else 'unresolved'
         row['votes'] = bucket['votes']
         row['supporting_engines'] = list(winning_votes)
         row['issue'] = '' if accepted else ('Повтор предмета в результате OCR.' if bucket['duplicate'] else
@@ -163,7 +162,3 @@ def reconcile(observations, threshold=OCR_THRESHOLD, parser=None):
             row.update(auto_verified=False, verification='manual_required', consensus_status='unresolved',
                        issue='Повторяется предмет.', conflict=True)
     return rows
-
-
-def needs_third(observations, rows):
-    return not rows or any(not r['auto_verified'] for r in rows) or any(not o.get('ok') for o in observations)
