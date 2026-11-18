@@ -1,7 +1,6 @@
 """Prepare local document pages, run OCR and attach previews to the result."""
 import base64
 import io
-import os
 from pathlib import Path
 import tempfile
 
@@ -19,8 +18,7 @@ Image.MAX_IMAGE_PIXELS = 30_000_000
 
 def recognize(images, kind='auto'):
     return recognize_document(images, parser=parse_engine_rows, include_observations=True,
-                              requested_type=kind,
-                              fast_third=os.environ.get('OCR_FULL_THIRD') != '1')
+                              requested_type=kind)
 
 
 def process(data, kind):

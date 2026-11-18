@@ -32,14 +32,13 @@ def tesseract_js_available():
 def engine():
     native = native_tesseract()
     tesseract = bool(native and (Path(native).is_file() or shutil.which(native))) if native else tesseract_js_available()
-    rapid = (MODEL_ROOT / 'rapid-ready.json').is_file()
-    easy = all((MODEL_ROOT / 'easyocr' / name).is_file() for name in ('craft_mlt_25k.pth', 'cyrillic_g2.pth'))
-    if rapid and tesseract:
-        return 'PaddleOCR + Tesseract → EasyOCR' if easy else 'PaddleOCR + Tesseract · EasyOCR требует настройки'
-    if rapid:
-        return 'PaddleOCR · Tesseract требует настройки'
+    docling = (MODEL_ROOT / 'docling').is_dir() and (MODEL_ROOT / 'rapid').is_dir()
+    if docling and tesseract:
+        return 'Docling → Tesseract'
+    if docling:
+        return 'Docling'
     if tesseract:
-        return 'Tesseract · порог 80%' if native else 'Tesseract.js · порог 80%'
+        return 'Tesseract' if native else 'Tesseract.js'
     return None
 
 
@@ -223,11 +222,10 @@ def main():
     parser.add_argument('--open', action='store_true', help='Open the local interface in the browser')
     args = parser.parse_args()
     server = make_server(args.port)
-    from ocr_engines import warmup, warmup_docling
+    from ocr_engines import warmup_docling
     def prepare():
-        server.ocr_ready = all(warmup().values())
-        print('OCR: готов к обработке' if server.ocr_ready else 'OCR: проверьте локальные модели', flush=True)
         server.docling_ready = warmup_docling()
+        server.ocr_ready = server.docling_ready or bool(native_tesseract() or tesseract_js_available())
         print('Docling: готов к обработке' if server.docling_ready else 'Docling: проверьте локальные модели', flush=True)
     threading.Thread(target=prepare, daemon=True, name='ocr-warmup').start()
     print(f'Приём · Документы: http://127.0.0.1:{args.port}', flush=True)

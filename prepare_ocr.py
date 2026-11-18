@@ -1,25 +1,22 @@
-"""Explicit download/verification of local models, using a synthetic project sample."""
+"""Prepare the Russian RapidOCR weights used inside Docling."""
 from pathlib import Path
-from PIL import Image
-from ocr_worker import recognize
+from rapidocr import RapidOCR, OCRVersion, ModelType, LangRec
 
 ROOT = Path(__file__).resolve().parent
 
 
 def main():
-    models = ROOT / '.ocr-models'
-    models.mkdir(exist_ok=True)
-    sample = ROOT / 'samples/certificate_9.png'
-    with Image.open(sample) as image:
-        page = {'page': 1, 'path': str(sample), 'width': image.width, 'height': image.height}
-    for engine in ('rapidocr', 'easyocr'):
-        print(engine + ': подготовка модели', flush=True)
-        if not recognize(engine, [page], models, download=True):
-            raise RuntimeError(engine + ': не прочитан контрольный образец')
-    for engine in ('rapidocr', 'tesseract', 'easyocr'):
-        if not recognize(engine, [page], models, download=False):
-            raise RuntimeError(engine + ': проверка локальной модели не пройдена')
-        print(engine + ': готов', flush=True)
+    directory = ROOT / '.ocr-models' / 'rapid'
+    directory.mkdir(parents=True, exist_ok=True)
+    RapidOCR(params={'Global.model_root_dir': str(directory),
+                     'Det.ocr_version': OCRVersion.PPOCRV5, 'Det.model_type': ModelType.MOBILE,
+                     'Rec.ocr_version': OCRVersion.PPOCRV5, 'Rec.model_type': ModelType.MOBILE,
+                     'Rec.lang_type': LangRec.ESLAV})
+    from docling_worker import rapid_model_paths
+    for path in rapid_model_paths(directory.parent):
+        if not path.is_file():
+            raise FileNotFoundError(f'Не подготовлена модель Docling: {path.name}')
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    main()
