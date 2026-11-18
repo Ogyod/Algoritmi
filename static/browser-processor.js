@@ -1,4 +1,5 @@
 import {recognizePage} from "./ocr-engine.js";
+import {acceptSingleOCR} from "./domain.js";
 const MAX_BYTES = 20 * 1024 * 1024, MAX_PAGES = 20, MAX_PIXELS = 30000000;
 const asset = (path) => new URL(path, import.meta.url).href;
 const scripts = new Map();
@@ -220,9 +221,9 @@ async function recognizeDocument(files, kind, progress, worker) {
   progress("Определение категории и разбор оценок…");
   const result = await interpretDocument({pages, type: kind});
   result.engine = "Tesseract.js · браузер";
-  result.grades = result.grades.map(row => ({...row, auto_verified: false, verified: false, verification: "manual_required"}));
-  result.auto_grades_verified = false;
-  result.average = null;
-  if (result.grades.length) result.warnings.push("В автономной браузерной версии работает один OCR. Для автоматической сверки двумя движками откройте локальный сервер Algoritmi.");
+  acceptSingleOCR(result);
+  if (result.grades.length) result.warnings.push(result.auto_grades_verified
+    ? "Оценки приняты по уверенности OCR от 80%. Средний балл рассчитан автоматически."
+    : "Строки с низкой уверенностью или неоднозначными данными требуют сверки по скану.");
   return result;
 }

@@ -4,13 +4,12 @@ import {
   isCertificate,
   isEducation,
   hasGradeTable,
-  meanGrade,
   resultAverage,
   invalidateGradeReview,
   confirmReview,
+  applyCategoryChange,
   buildPacket,
   packetCSV,
-  reviewError,
 } from "./domain.js";
 import {browserMode, createDocumentProcessor, readArchive, reinterpretDocument, downloadPacket} from "./processor.js";
 
@@ -173,7 +172,7 @@ function gradeTable(result) {
         (
           row,
           index,
-        ) => `<tr class="${row.conflict || (!row.auto_verified && (row.verification === "manual_required" || row.confidence < 0.8)) ? "low-confidence" : ""}" title="${escapeHTML(row.auto_verified ? (row.source || "Оценка согласована OCR") : "Предварительная оценка. Проверьте её по скану.")}">
+        ) => `<tr class="${row.conflict || (!row.auto_verified && (row.verification === "manual_required" || row.confidence < 0.8)) ? "low-confidence" : ""}" title="${escapeHTML(row.auto_verified ? (row.source || "Оценка принята по уверенности OCR") : "Предварительная оценка. Проверьте её по скану.")}">
       <td><input aria-label="Предмет ${index + 1}" value="${escapeHTML(row.subject)}" data-subject="${index}"></td>
       <td><input aria-label="Оценка ${index + 1}" type="number" min="2" max="5" step="1" value="${row.grade ?? ""}" data-grade="${index}"></td>
       <td><button class="delete-grade" data-delete-grade="${index}" aria-label="Удалить предмет ${index + 1}">×</button></td></tr>`,
@@ -199,7 +198,7 @@ function renderResults() {
   $("review-state").textContent = result
     ? result.reviewed
       ? "Проверен"
-      : result.auto_grades_verified ? "Оценки согласованы" : "Нужна проверка"
+      : result.auto_grades_verified ? "Оценки приняты" : "Нужна проверка"
     : file?.status === "processing"
       ? "Распознаём"
       : "Ожидает загрузки";
@@ -337,30 +336,7 @@ async function changeCategory(file, kind) {
   try {
     const previous = file.result;
     const result = await reinterpretDocument(previous.ocr_lines, kind);
-    // Reuse OCR text and previews; do not recognize the same scan again.
-    result.pages = previous.pages;
-    result.engine = previous.engine;
-    if (isEducation(previous.type) && isEducation(result.type)) {
-      for (const field of [
-        "document_series",
-        "document_number",
-        "series_not_present",
-      ])
-        result[field] = previous[field];
-    }
-    if (hasGradeTable(previous.type) && hasGradeTable(result.type))
-      {
-        result.grades = previous.grades;
-        result.ocr = previous.ocr;
-        result.docling = previous.docling;
-        result.auto_grades_verified = previous.auto_grades_verified;
-        result.grades_need_review = previous.grades_need_review;
-      }
-    if (previous.type === "achievement" && result.type === "achievement") {
-      result.achievement = previous.achievement;
-      result.points = previous.points;
-    }
-    file.result = result;
+    file.result = applyCategoryChange(previous, result);
     if (Object.hasOwn(DOCUMENT_TYPES, result.type)) file.kind = result.type;
   } catch (error) {
     toast(error.message);
@@ -495,7 +471,6 @@ $("confirm").onclick = () => {
     toast(error);
     return;
   }
-  result.reviewed = true;
   render();
 };
 $("prev-page").onclick = () => {
@@ -515,12 +490,12 @@ $("applicant-id").oninput = renderSummary;
 $("export-json").onclick = () => exportPacket("json");
 $("export-csv").onclick = () => exportPacket("csv");
 
-if (browserMode) $("engine").textContent = "Один OCR · ручная сверка";
+if (browserMode) $("engine").textContent = "Один OCR · порог 80%";
 else fetch("/api/health")
   .then((response) => response.json())
   .then((result) => {
     $("engine").textContent = result.engine
-      ? result.engine.includes("PaddleOCR") ? "Два OCR + третий при расхождениях" : "Один OCR · ручная сверка"
+      ? result.engine.includes("PaddleOCR") ? "OCR · дополнительные при необходимости" : "Один OCR · порог 80%"
       : "OCR требует настройки";
   })
   .catch(() => ($("engine").textContent = "Нет связи с обработчиком"));

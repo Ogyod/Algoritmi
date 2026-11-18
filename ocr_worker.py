@@ -64,6 +64,25 @@ def rectangle(points):
             int(max(p[0] for p in points)), int(max(p[1] for p in points))]
 
 
+def native_tesseract():
+    executable = os.environ.get('TESSERACT_CMD') or shutil.which('tesseract')
+    if executable:
+        return executable
+    installed = Path(r'C:\Program Files\Tesseract-OCR\tesseract.exe')
+    return str(installed) if installed.is_file() else None
+
+
+def tesseract_node():
+    root = Path(__file__).resolve().parent
+    bundled = Path.home() / '.cache/codex-runtimes/codex-primary-runtime/dependencies/node'
+    node_name = 'node.exe' if os.name == 'nt' else 'node'
+    node = shutil.which('node') or str(bundled / 'bin' / node_name)
+    packages = root / 'node_modules'
+    if not (packages / 'tesseract.js').is_dir():
+        packages = bundled / 'node_modules'
+    return node, packages
+
+
 def merge_regions(regions, width, height):
     """Read overlapping disputed rows once; retain their complete pixel coverage."""
     merged = []
@@ -132,8 +151,8 @@ def recognize(engine, pages, models, download=False):
                         crop = Image.fromarray(array[top:bottom,left:right]).convert('L')
                         import numpy as np
                         attempted = reader.recognize(np.asarray(crop), detail=1, paragraph=False)
-                        from ocr_consensus import GRADE_END
-                        if (attempted and all(float(item[2]) >= .75 and GRADE_END.match(item[1].strip())
+                        from ocr_consensus import GRADE_END, OCR_THRESHOLD
+                        if (attempted and all(float(item[2]) >= OCR_THRESHOLD and GRADE_END.match(item[1].strip())
                                               for item in attempted)):
                             answer = attempted
                             x0, y0 = left, top
@@ -154,17 +173,10 @@ def recognize(engine, pages, models, download=False):
                     shifted = [[x + x0, y + y0] for x, y in box]
                     lines.append({'text': text, 'confidence': float(score), 'page': page['page'], 'box': rectangle(shifted)})
     elif engine == 'tesseract':
-        configured = os.environ.get('TESSERACT_CMD')
-        executable = configured or shutil.which('tesseract')
-        installed = Path(r'C:\Program Files\Tesseract-OCR\tesseract.exe')
-        executable = executable or (str(installed) if installed.exists() else None)
+        executable = native_tesseract()
         if not executable:
             root = Path(__file__).resolve().parent
-            bundled = Path.home() / '.cache/codex-runtimes/codex-primary-runtime/dependencies/node'
-            node = shutil.which('node') or str(bundled / 'bin/node.exe')
-            packages = root / 'node_modules'
-            if not (packages / 'tesseract.js').exists():
-                packages = bundled / 'node_modules'
+            node, packages = tesseract_node()
             project_tesseract = (root / 'ocr.cjs').is_file()
             bridge = root / ('ocr.cjs' if project_tesseract else 'tesseract_bridge.cjs')
             payload = pages if project_tesseract else {'pages': pages, 'models': str(models / 'tesseract')}

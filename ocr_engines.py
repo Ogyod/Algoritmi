@@ -189,25 +189,48 @@ def needs_table_suggestions(rows):
     return False
 
 
+def can_skip_other_engines(pages, observation, rows, requested_type):
+    if not observation['ok'] or len(rows) < 8 or not all(row['auto_verified'] for row in rows):
+        return False
+    lines = observation['lines']
+    kind = classify('\n'.join(line['text'] for line in lines)) if requested_type == 'auto' else requested_type
+    if kind not in CERTIFICATE_TYPES or not any(
+            'итоговые оценки' in normalize(line['text']) or
+            'наименование учебных предметов' in normalize(line['text']) for line in lines):
+        return False
+    grade_pages = {row['page'] for row in rows}
+    for page in pages:
+        number = page['page']
+        if number in grade_pages:
+            continue
+        page_lines = [line for line in lines if line['page'] == number]
+        if not agreed_certificate_cover_page([{**observation, 'lines': page_lines}]):
+            return False
+    return True
+
+
 def recognize_document(pages, runner=None, parser=None, include_observations=False,
                        requested_type='auto', docling_runner=None, fast_third=False):
     runner = runner or run_engine
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(runner, engine, pages) for engine in ('rapidocr', 'tesseract')]
-        observations = [f.result() for f in futures]
+    observations = [runner('tesseract', pages)]
     threshold = OCR_THRESHOLD
     first_rows = reconcile(observations, threshold, parser)
-    contested = {r['page'] for r in first_rows if not r['auto_verified']}
-    # Pages with no candidates, or a failed primary engine, also need another reading.
-    for page in pages:
-        if page['page'] in contested:
-            continue
-        page_observations = [{**o, 'lines': [line for line in o['lines'] if line['page'] == page['page']]} for o in observations]
-        page_rows = reconcile(page_observations, threshold, parser)
-        if needs_third(page_observations, page_rows) and not (
-                not page_rows and (agreed_non_grade_page(page_observations, requested_type)
-                                   or agreed_certificate_cover_page(page_observations))):
-            contested.add(page['page'])
+    first_only = can_skip_other_engines(pages, observations[0], first_rows, requested_type)
+    contested = set()
+    if not first_only:
+        observations.append(runner('rapidocr', pages))
+        first_rows = reconcile(observations, threshold, parser)
+        contested = {r['page'] for r in first_rows if not r['auto_verified']}
+        # Pages with no candidates, or a failed primary engine, also need another reading.
+        for page in pages:
+            if page['page'] in contested:
+                continue
+            page_observations = [{**o, 'lines': [line for line in o['lines'] if line['page'] == page['page']]} for o in observations]
+            page_rows = reconcile(page_observations, threshold, parser)
+            if needs_third(page_observations, page_rows) and not (
+                    not page_rows and (agreed_non_grade_page(page_observations, requested_type)
+                                       or agreed_certificate_cover_page(page_observations))):
+                contested.add(page['page'])
     if contested:
         third_pages = []
         for page in pages:
@@ -259,12 +282,13 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
                 rows, response.get('rows', []), parser)
     summary = {'engines': [{'name': o['engine'], 'ok': o['ok'], 'error': o['error'],
                             **({'seconds': o['seconds']} if 'seconds' in o else {})} for o in observations],
-               'third_used': bool(contested), 'third_pages': sorted(contested), 'threshold': threshold,
+               'first_only': first_only, 'third_used': bool(contested),
+               'third_pages': sorted(contested), 'threshold': threshold,
                'accepted': sum(bool(r['auto_verified']) for r in rows),
                'unresolved': sum(not r['auto_verified'] for r in rows),
-               'status': 'agreed' if rows and all(r['auto_verified'] for r in rows) else 'needs_review'}
+               'status': 'accepted' if rows and all(r['auto_verified'] for r in rows) else 'needs_review'}
     result = {'grades': rows, 'ocr': summary, 'docling': docling,
-            'warning': 'Два независимых OCR согласовали строки.' if summary['status'] == 'agreed' else
+            'warning': 'Оценки приняты по уверенности OCR.' if summary['status'] == 'accepted' else
                        'Спорные или пропущенные строки требуют сверки. Предлагаемые оценки показаны по каждому движку.'}
 
     if include_observations:

@@ -29,7 +29,7 @@ export async function processDocument(file, kind, progress) {
 
 export async function processDocumentGroup(files, kind, progress) {
   if (browserMode) return (await browser()).processDocumentGroup(files, kind, progress);
-  progress?.("PaddleOCR и Tesseract читают документ; EasyOCR проверит расхождения.");
+  progress?.("Tesseract читает документ. При необходимости подключатся другие OCR.");
   if (files.length === 1) return requestJSON("/api/process", {data: await base64File(files[0]), type: kind});
   const payload = [];
   for (const file of files) payload.push({name: file.name, data: await base64File(file)});

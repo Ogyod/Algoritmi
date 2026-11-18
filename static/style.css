@@ -56,13 +56,6 @@ p { line-height: 1.65; }
 .header-actions { display: flex; align-items: center; gap: 30px; }
 .local-label { display: inline-flex; align-items: center; gap: 8px; color: #647789; font-size: .8125rem; }
 .local-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--bright-blue); box-shadow: 0 0 0 4px #edf5ff; }
-.main-nav {
-  max-width: 1480px; margin: auto; padding: 0 32px; display: flex;
-  align-items: center; gap: 32px; min-height: 46px;
-}
-.main-nav a { padding: 14px 0; text-decoration: none; font-size: .7rem; font-weight: 700; letter-spacing: .55px; text-transform: uppercase; border-bottom: 2px solid transparent; }
-.main-nav a:hover, .main-nav .nav-active { color: var(--blue); border-bottom-color: var(--blue); }
-.main-nav > span { margin-left: auto; font-size: .7rem; color: #8393a2; }
 .hero { position: relative; overflow: hidden; background: linear-gradient(110deg, #d4e8ff 0%, #c4f1ff 100%); }
 .hero-inner {
   display: grid; grid-template-columns: 1.1fr 1fr; align-items: center; gap: 32px;
@@ -213,8 +206,7 @@ footer strong { color: var(--blue); font-family: var(--display); font-size: .937
   #result-content { min-height: 510px; }
 }
 @media (max-width: 1180px) {
-  .topbar, .main-nav { padding-left: 24px; padding-right: 24px; }
-  .main-nav > span { display: none; }
+  .topbar { padding-left: 24px; padding-right: 24px; }
   .hero-inner { padding-left: 32px; padding-right: 32px; gap: 10px; }
   .main-content { padding-left: 24px; padding-right: 24px; }
   .workspace { grid-template-columns: 244px minmax(0, 1fr) minmax(0, 1.02fr); gap: 12px; }
@@ -255,9 +247,6 @@ footer strong { color: var(--blue); font-family: var(--display); font-size: .937
   .brand-divider { height: 24px; margin: 0 1px; }
   .local-label { max-width: 110px; font-size: .625rem; line-height: 1.4; }
   .local-dot { width: 5px; height: 5px; flex-shrink: 0; }
-  .main-nav { min-height: 43px; padding: 0 18px; gap: 22px; overflow-x: auto; scrollbar-width: none; }
-  .main-nav::-webkit-scrollbar { display: none; }
-  .main-nav a { flex-shrink: 0; font-size: .5625rem; letter-spacing: .3px; }
   .hero-inner { display: block; position: relative; padding: 28px 22px 26px; }
   .hero-copy { position: relative; z-index: 1; }
   .hero-eyebrow { font-size: .5rem; letter-spacing: 1.25px; }

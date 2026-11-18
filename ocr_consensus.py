@@ -7,7 +7,7 @@ import re
 import unicodedata
 
 WORDS = {'отлично': 5, 'хорошо': 4, 'удовлетворительно': 3, 'неудовлетворительно': 2}
-OCR_THRESHOLD = .70
+OCR_THRESHOLD = .80
 WORD_PATTERN = '|'.join(sorted(WORDS, key=len, reverse=True))
 GRADE_END = re.compile(r'^(.+?)\s+(?:([2-5зЗ?])(?:\s*\(?(' + WORD_PATTERN + r')\)?)?|(' + WORD_PATTERN + r'))\s*[.;,]?$', re.I)
 SUBJECT_HINTS = ('математик', 'алгебр', 'геометри', 'русский язык', 'литератур', 'истори', 'обществознан',
@@ -104,7 +104,7 @@ def _same_row(first, second):
 
 
 def reconcile(observations, threshold=OCR_THRESHOLD, parser=None):
-    """One vote per engine; a quorum requires the same subject AND grade."""
+    """Accept a high-confidence grade unless another high-confidence OCR contradicts it."""
     parser = parser or parse_lines
     buckets = []
     for observation in observations:
@@ -125,8 +125,9 @@ def reconcile(observations, threshold=OCR_THRESHOLD, parser=None):
     for bucket in buckets:
         counts = Counter((normalized(v['subject']), v['grade']) for v in bucket['votes'].values()
                          if type(v['grade']) is int and not v['conflict'] and v['confidence'] >= threshold)
-        winner, count = counts.most_common(1)[0] if counts else (None, 0)
-        accepted = count >= 2 and not bucket['duplicate']
+        winner = counts.most_common(1)[0][0] if counts else None
+        high_conflict = len(counts) > 1
+        accepted = bool(counts) and not high_conflict and not bucket['duplicate']
         winning_votes = {name: v for name, v in bucket['votes'].items()
                          if accepted and (normalized(v['subject']), v['grade']) == winner
                          and v['confidence'] >= threshold and not v['conflict']}
@@ -142,14 +143,15 @@ def reconcile(observations, threshold=OCR_THRESHOLD, parser=None):
         row = dict(chosen)
         row['auto_verified'] = accepted
         row['verified'] = False
-        row['verification'] = 'ocr_consensus' if accepted else 'manual_required'
-        row['consensus_status'] = ('third_resolved' if 'easyocr' in winning_votes else 'agreed') if accepted else 'unresolved'
+        row['verification'] = 'ocr_high_confidence' if accepted else 'manual_required'
+        row['consensus_status'] = ('third_resolved' if 'easyocr' in winning_votes else
+                                   'agreed' if len(winning_votes) > 1 else 'single_high_confidence') if accepted else 'unresolved'
         row['votes'] = bucket['votes']
         row['supporting_engines'] = list(winning_votes)
         row['issue'] = '' if accepted else ('Повтор предмета в результате OCR.' if bucket['duplicate'] else
-                                           'Нет двух уверенных совпадений предмета и оценки.')
-        # A single best OCR reading is visible for review, but never gains a quorum.
-        row['conflict'] = not accepted and suggested is None
+                                           'Уверенные OCR дали разные оценки.' if high_conflict else
+                                           'Ни один OCR не достиг порога уверенности.')
+        row['conflict'] = high_conflict or (not accepted and suggested is None)
         identity = {'page': row['page'], 'subject': row['subject'], 'votes': bucket['votes']}
         row['row_id'] = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:24]
         rows.append(row)

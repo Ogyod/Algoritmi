@@ -72,7 +72,7 @@ export function invalidateGradeReview(result, index) {
 export function confirmReview(result) {
   if (!result) return reviewError(result);
   const candidate = {...result, grades: (result.grades || []).map(row => ({...row, verified: true,
-    verification: row.auto_verified ? "ocr_consensus" : "manual"}))};
+    verification: row.auto_verified ? (row.verification || "ocr_high_confidence") : "manual"}))};
   const error = reviewError(candidate);
   if (error) return error;
   result.grades = candidate.grades;
@@ -113,6 +113,47 @@ export function reviewError(result) {
       return "Укажите достижение и неотрицательное количество баллов по правилам приёма.";
   }
   return null;
+}
+
+export function acceptSingleOCR(result) {
+  result.grades = result.grades.map(row => {
+    const accepted = Number.isInteger(row.grade) && !row.conflict && row.confidence >= .80;
+    return {...row, auto_verified: accepted, verified: false,
+      verification: accepted ? "ocr_high_confidence" : "manual_required"};
+  });
+  const average = isCertificate(result.type) ? meanGrade(result.grades) : null;
+  result.auto_grades_verified = average !== null && result.grades.every(row => row.auto_verified);
+  result.average = result.auto_grades_verified ? average : null;
+  const identifiersConflict = (result.identifier_candidates?.length ?? 0) > 1;
+  result.auto_document_verified = result.auto_grades_verified && !identifiersConflict && !reviewError(result);
+  result.reviewed = result.auto_document_verified;
+  return result;
+}
+
+export function applyCategoryChange(previous, result) {
+  result.pages = previous.pages;
+  result.engine = previous.engine;
+  if (isEducation(previous.type) && isEducation(result.type)) {
+    for (const field of ["document_series", "document_number", "series_not_present"])
+      result[field] = previous[field];
+  }
+  if (hasGradeTable(result.type)) {
+    if (hasGradeTable(previous.type)) {
+      for (const field of ["grades", "ocr", "docling", "auto_grades_verified", "grades_need_review"])
+        result[field] = previous[field];
+    } else {
+      result.grades = result.grades.map(row => ({...row,
+        auto_verified: false, verified: false, verification: "manual_required"}));
+      invalidateGradeReview(result);
+      if (result.grades.length) result.warnings.push("Сверьте найденные оценки после смены категории.");
+    }
+  }
+  if (previous.type === "achievement" && result.type === "achievement") {
+    result.achievement = previous.achievement;
+    result.points = previous.points;
+  }
+  result.average = isCertificate(result.type) ? resultAverage(result) : null;
+  return result;
 }
 
 export function buildPacket(files, applicantId) {

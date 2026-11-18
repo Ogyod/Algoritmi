@@ -2,7 +2,6 @@
 import argparse
 import base64
 import binascii
-import io
 import json
 import os
 import secrets
@@ -10,149 +9,39 @@ from urllib.parse import urlparse
 from pathlib import Path
 import shutil
 import subprocess
-import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from PIL import Image, ImageOps, UnidentifiedImageError
-import pypdfium2 as pdfium
-from core import DOCUMENT_TYPES, interpret_lines
-from ocr_engines import recognize_document, MODEL_ROOT
+from core import interpret_lines
+from document_processing import MAX_PAGES, process, process_group
+from ocr_engines import MODEL_ROOT
 from ocr_process import shutdown_workers
-from ocr_adapter import parse_engine_rows, interpret_consensus
-from uploads import Problem, unpack_archive
+from ocr_worker import native_tesseract, tesseract_node
+from uploads import MAX_FILE, Problem, unpack_archive
 from http_uploads import HTTPProblem, read_body, read_upload
 from batch_service import BatchService
 
 ROOT = Path(__file__).resolve().parent
-MAX_BYTES = 20 * 1024 * 1024
 MAX_BODY = 29 * 1024 * 1024
-MAX_PAGES = 20
-Image.MAX_IMAGE_PIXELS = 30_000_000
 OCR_LOCK = threading.Lock()
 
-def node_environment():
-    env = os.environ.copy()
-    bundled = Path.home() / '.cache/codex-runtimes/codex-primary-runtime/dependencies/node'
-    node = shutil.which('node') or str(bundled/'bin/node')
-    packages = ROOT / 'node_modules'
-    if not (packages/'tesseract.js').exists():
-        packages = bundled/'node_modules'
-    env['NODE_PATH'] = str(packages)
-    return node, env, (packages/'tesseract.js').exists()
+def tesseract_js_available():
+    node, packages = tesseract_node()
+    tessdata = all((ROOT / '.models' / f'{lang}.traineddata').is_file() for lang in ('rus', 'eng'))
+    return Path(node).is_file() and (packages / 'tesseract.js').is_dir() and tessdata
 
 def engine():
-    node, _, installed = node_environment()
-    tessdata = all((ROOT / '.models' / f'{lang}.traineddata').is_file() for lang in ('rus', 'eng'))
-    tesseract = installed and Path(node).is_file() and tessdata
+    native = native_tesseract()
+    tesseract = bool(native and (Path(native).is_file() or shutil.which(native))) if native else tesseract_js_available()
     rapid = (MODEL_ROOT / 'rapid-ready.json').is_file()
     easy = all((MODEL_ROOT / 'easyocr' / name).is_file() for name in ('craft_mlt_25k.pth', 'cyrillic_g2.pth'))
     if rapid and tesseract:
         return 'PaddleOCR + Tesseract → EasyOCR' if easy else 'PaddleOCR + Tesseract · EasyOCR требует настройки'
-    return 'Tesseract.js · один OCR, нужна сверка' if tesseract else None
+    if rapid:
+        return 'PaddleOCR · Tesseract требует настройки'
+    if tesseract:
+        return 'Tesseract · порог 80%' if native else 'Tesseract.js · порог 80%'
+    return None
 
-
-def recognize(images, kind='auto'):
-    return recognize_document(images, parser=parse_engine_rows, include_observations=True,
-                              requested_type=kind,
-                              fast_third=os.environ.get('OCR_FULL_THIRD') != '1')
-
-
-def process(data, kind):
-    return process_group([('upload', data)], kind)
-
-
-def pdf_render_scale(page, width, height):
-    scale = min(300 / 72, 3600 / width, 4800 / height)
-    try:
-        objects = list(page.get_objects())
-        if len(objects) != 1 or not isinstance(objects[0], pdfium.PdfImage):
-            return scale
-        image = objects[0]
-        left, bottom, right, top = image.get_bounds()
-        image_width, image_height = right - left, top - bottom
-        if image_width <= 0 or image_height <= 0 or image_width * image_height < .8 * width * height:
-            return scale
-        pixels_width, pixels_height = image.get_px_size()
-        if pixels_width <= 0 or pixels_height <= 0:
-            return scale
-        native_dpi = 72 * max(pixels_width / image_width, pixels_height / image_height)
-        if native_dpi <= 180:
-            return min(scale, 200 / 72)
-    except Exception:
-        # An optional size check must never prevent a valid PDF from rendering.
-        pass
-    return scale
-
-
-def process_group(files, kind):
-    if not isinstance(kind, str) or (kind != 'auto' and kind not in DOCUMENT_TYPES):
-        raise ValueError('Неизвестный тип документа.')
-    pages = []
-    images = []
-    with tempfile.TemporaryDirectory(prefix='admissions-') as temp:
-        def handle_image(image, source_page):
-            number = len(pages) + 1
-            if number > MAX_PAGES:
-                raise ValueError('В одном документе допускается до 20 страниц.')
-            image = ImageOps.exif_transpose(image).convert('RGB')
-            image.thumbnail((3600, 4800))
-            path = Path(temp) / f'{number}.png'
-            image.save(path, compress_level=1)
-            enhanced = Path(temp) / f'{number}-enhanced.png'
-            images.append({'page': number, 'path': str(path), 'enhanced_path': str(enhanced),
-                           'width': image.width, 'height': image.height})
-            image.thumbnail((1000, 1400))
-            buffer = io.BytesIO()
-            image.save(buffer, 'JPEG', quality=83)
-            pages.append({'number': number, 'source_file': source_name, 'source_page': source_page,
-                          'preview': 'data:image/jpeg;base64,'+base64.b64encode(buffer.getvalue()).decode()})
-        for source_name, data in files:
-            if not data or len(data) > MAX_BYTES:
-                raise ValueError('Допустимый размер каждого файла — от 1 байта до 20 МБ.')
-            if data.startswith(b'%PDF-'):
-                try:
-                    doc = pdfium.PdfDocument(data)
-                except Exception:
-                    raise ValueError('Не удалось открыть PDF. Проверьте файл и отсутствие пароля.')
-                try:
-                    if not 1 <= len(doc) <= MAX_PAGES:
-                        raise ValueError('PDF должен содержать от 1 до 20 страниц. Разделите большой файл.')
-                    for i in range(len(doc)):
-                        page = doc[i]
-                        try:
-                            w, h = page.get_size()
-                            if w <= 0 or h <= 0:
-                                raise ValueError('Некорректный размер страницы PDF.')
-                            bitmap = page.render(scale=pdf_render_scale(page, w, h))
-                            try:
-                                handle_image(bitmap.to_pil(), i+1)
-                            finally:
-                                bitmap.close()
-                        finally:
-                            page.close()
-                finally:
-                    doc.close()
-            else:
-                try:
-                    with Image.open(io.BytesIO(data)) as image:
-                        if image.format not in ['JPEG', 'PNG', 'TIFF', 'WEBP']:
-                            raise ValueError('Поддерживаются PDF, JPEG, PNG, TIFF и WEBP.')
-                        if image.width * image.height > Image.MAX_IMAGE_PIXELS:
-                            raise ValueError('Размер изображения превышает 30 миллионов пикселей.')
-                        frames = getattr(image, 'n_frames', 1)
-                        if frames > MAX_PAGES:
-                            raise ValueError('Изображение должно содержать не более 20 страниц.')
-                        for i in range(frames):
-                            image.seek(i)
-                            if image.width * image.height > Image.MAX_IMAGE_PIXELS:
-                                raise ValueError('Размер страницы изображения превышает 30 миллионов пикселей.')
-                            handle_image(image.copy(), i+1)
-                except (UnidentifiedImageError, Image.DecompressionBombError, OSError):
-                    raise ValueError('Не удалось прочитать изображение. Используйте PDF, JPEG, PNG, TIFF или WEBP.')
-        recognized = recognize(images, kind)
-        result = interpret_consensus(recognized, kind)
-        result['pages'] = [{k: v for k, v in page.items() if k != 'blocks'} for page in pages]
-    return result
 
 class Handler(BaseHTTPRequestHandler):
     def setup(self):
@@ -188,7 +77,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith('/api/v1/'):
             return self.integration_request()
         if self.path == '/api/health':
-            return self.send(200, {'ok': True, 'app': 'admissions-document-processor', 'engine': engine(), 'max_bytes': MAX_BYTES,
+            return self.send(200, {'ok': True, 'app': 'admissions-document-processor', 'engine': engine(), 'max_bytes': MAX_FILE,
                                    'ocr_ready': getattr(self.server, 'ocr_ready', False),
                                    'docling_ready': getattr(self.server, 'docling_ready', False)})
         files = {'/': ('index.html', 'text/html; charset=utf-8'),
@@ -268,7 +157,9 @@ class Handler(BaseHTTPRequestHandler):
             raise HTTPProblem('Ресурс API не найден.', 404)
         except HTTPProblem as error:
             return self.send(error.status, {'error': str(error)})
-        except (Problem, ValueError, TypeError, KeyError):
+        except Problem as error:
+            return self.send(400, {'error': str(error)})
+        except (ValueError, TypeError, KeyError):
             return self.send(400, {'error': 'Некорректный файл, архив или данные запроса.'})
         except Exception:
             return self.send(500, {'error': 'Не удалось выполнить операцию. Прочитайте сохранённый результат.'})
@@ -294,7 +185,7 @@ class Handler(BaseHTTPRequestHandler):
             return 200, interpret_lines(lines, body.get('type', 'auto'))
         if self.path == '/api/process-group':
             files = body.get('files') if isinstance(body, dict) else None
-            if not isinstance(files, list) or not 1 <= len(files) <= 20:
+            if not isinstance(files, list) or not 1 <= len(files) <= MAX_PAGES:
                 raise ValueError('В одном документе допускается до 20 файлов.')
             decoded = []
             for item in files:

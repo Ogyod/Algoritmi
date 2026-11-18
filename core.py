@@ -104,8 +104,8 @@ def extract_grades(lines):
         conflict = len(values) > 1 or any(digit not in {'2', '3', '4', '5'} for digit in digits)
         grade = next(iter(values)) if len(values) == 1 and not conflict else None
         result.append({'subject': subject, 'grade': grade,
-                       'confidence': round(min(line.get('confidence', 0),
-                                               1 if known_subject else .5), 3),
+                       'confidence': min(line.get('confidence', 0),
+                                         1 if known_subject else .5),
                        'known_subject': known_subject,
                        'source': line['text'], 'conflict': conflict})
     return result
@@ -237,7 +237,7 @@ def extract_identifiers(lines):
         if candidates:
             warnings.append('Найдены разные реквизиты. Выберите нужные по скану и заполните серию и номер вручную.')
         else:
-            warnings.append('Серия и номер не найдены. Расчёт продолжен без этих реквизитов.')
+            warnings.append('Серия и номер не найдены. Эти реквизиты необязательны для расчёта.')
     return {'document_series': series, 'document_number': number,
             'series_not_present': False, 'identifier_candidates': candidates}, warnings
 

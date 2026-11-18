@@ -57,31 +57,35 @@ def interpret_consensus(recognition, kind='auto'):
     result['auto_document_verified'] = False
     if result['type'] in CERTIFICATE_TYPES or result['type'] == 'education_unknown':
         result['grades'] = recognition['grades']
-        agreed = bool(result['grades']) and all(row['auto_verified'] for row in result['grades'])
-        result['auto_grades_verified'] = agreed
-        result['average'] = mean_grade(result['grades']) if agreed and result['type'] in CERTIFICATE_TYPES else None
+        accepted = bool(result['grades']) and all(row['auto_verified'] for row in result['grades'])
+        result['auto_grades_verified'] = accepted
+        result['average'] = mean_grade(result['grades']) if accepted and result['type'] in CERTIFICATE_TYPES else None
         result['warnings'] = [warning for warning in result['warnings'] if warning not in GRADE_WARNINGS]
-        if agreed:
-            message = 'Предметы и оценки согласованы двумя независимыми OCR.'
+        if accepted:
+            message = 'Предметы и оценки приняты по уверенности OCR от 80%.'
             if recognition['ocr']['third_used']:
-                message += ' Расхождения проверены третьим распознавателем EasyOCR.'
+                message += ' Спорные строки дополнительно прочитал EasyOCR.'
             if result['average'] is not None:
                 message += ' Средний балл рассчитан автоматически.'
             matching = [candidate for candidate in candidates if candidate['type'] == result['type']]
+            category_conflict = any(candidate['type'] in DOCUMENT_TYPES and candidate['type'] != result['type']
+                                    for candidate in candidates)
             numbers = {candidate['document_number'] for candidate in matching if candidate.get('document_number')}
             series = {candidate['document_series'] for candidate in matching if candidate.get('document_series')}
             result['auto_document_verified'] = (result['type'] in CERTIFICATE_TYPES
-                                                and len(matching) >= 2
+                                                and bool(matching) and not category_conflict
+                                                and all(len(candidate['identifier_candidates']) <= 1
+                                                        for candidate in matching)
                                                 and len(numbers) <= 1 and len(series) <= 1)
             message += (' Документ принят автоматически.' if result['auto_document_verified'] else
                         ' Категория или прочитанные реквизиты расходятся: проверьте их отдельно.')
             result['warnings'].append(message)
         elif result['grades']:
             result['warnings'].append(
-                f"Нет согласия двух OCR для {recognition['ocr']['unresolved']} строк. "
+                f"Не приняты автоматически {recognition['ocr']['unresolved']} строк(и): уверенность ниже 80% или есть противоречие. "
                 'Прочитанные оценки подставлены предварительно; проверьте жёлтые строки по скану.')
         else:
-            result['warnings'].append('Оценки не согласованы. Загрузите приложение с оценками или внесите строки вручную.')
+            result['warnings'].append('Оценки не найдены. Загрузите приложение с оценками или внесите строки вручную.')
     result['warnings'].extend(o['error'] for o in recognition['observations'] if not o['ok'])
     if result['docling']['suggested']:
         result['warnings'].append(f"Docling нашёл ещё {result['docling']['suggested']} строк(и) таблицы. Сверьте их со сканом.")

@@ -8,8 +8,8 @@ import tempfile
 import threading
 import uuid
 
-from core import CERTIFICATE_TYPES, DOCUMENT_TYPES, EDUCATION_TYPES, mean_grade, normalize
-import re
+from core import DOCUMENT_TYPES
+from document_review import apply_review
 from uploads import Problem, prepare_upload, MAX_FILES
 
 
@@ -138,67 +138,7 @@ class BatchService:
             document = self.get(document_id)
             if document['status'] not in ('review', 'ready') or data.get('revision') != document['revision']:
                 raise Problem('Документ не готов или ревизия устарела. Прочитайте результат заново.')
-            grades = data.get('grades')
-            if not isinstance(grades, list) or len(grades) > 100:
-                raise Problem('Нужен список не более 100 предметов.')
-            result = document['result']
-            saved_rows = {row.get('row_id'): row for row in result['grades'] if row.get('row_id')}
-            cleaned = []
-            names = set()
-            for original in grades:
-                if not isinstance(original, dict):
-                    raise Problem('Некорректная строка предмета.')
-                row = dict(original)
-                saved = saved_rows.get(row.get('row_id'))
-                same = bool(saved) and all(row.get(key) == saved.get(key) for key in ('subject','grade','page','include','reason'))
-                row['auto_verified'] = bool(same and saved.get('auto_verified'))
-                row['votes'] = saved.get('votes', {}) if saved else {}
-                row['supporting_engines'] = saved.get('supporting_engines', []) if row['auto_verified'] else []
-                row['verification'] = 'ocr_consensus' if row['auto_verified'] else 'manual' if row.get('verified') is True else 'manual_required'
-                if row.get('verified') is True:
-                    row['conflict'] = False
-                cleaned.append(row)
-                if not isinstance(row, dict) or not isinstance(row.get('subject'), str) or not 1 <= len(row['subject'].strip()) <= 200:
-                    raise Problem('Укажите название каждого предмета.')
-                name = normalize(row['subject'])
-                if name in names:
-                    raise Problem('Повторяется предмет: ' + row['subject'])
-                names.add(name)
-                if data.get('complete') is True and row.get('verified') is not True and not row['auto_verified']:
-                    raise Problem('Сверьте каждую оценку и передайте verified: true.')
-            grades = cleaned
-            kind = data.get('type', result['type'])
-            if kind not in DOCUMENT_TYPES:
-                raise Problem('Выберите категорию документа.')
-            can_calculate = bool(grades) and all(type(row.get('grade')) is int and row['grade'] in (2,3,4,5)
-                                                and not row.get('conflict') and (row.get('auto_verified') or row.get('verified') is True)
-                                                for row in grades)
-            if data.get('complete') is True and grades and not can_calculate:
-                raise Problem('Проверьте оценки от 2 до 5 и их подтверждение.')
-            average = mean_grade(grades) if can_calculate and kind in CERTIFICATE_TYPES else None
-            if data.get('complete') is True and kind in CERTIFICATE_TYPES and not grades:
-                raise Problem('Для расчёта аттестата нужен полный список оценок.')
-            for field in ('document_series', 'document_number', 'series_not_present', 'achievement', 'points'):
-                if field in data:
-                    result[field] = data[field]
-            if data.get('complete') is True and kind in EDUCATION_TYPES:
-                series = result.get('document_series', '')
-                number = result.get('document_number', '')
-                absent = result.get('series_not_present') is True
-                if (not isinstance(number, str) or (number and not re.fullmatch(r'\d{5,20}', number)) or
-                        not isinstance(series, str) or len(series) > 20 or
-                        (series and not re.fullmatch(r'[\w -]+', series)) or
-                        (series.strip() and absent)):
-                    raise Problem('Проверьте указанные серию и номер документа.')
-            if data.get('complete') is True and kind == 'achievement':
-                points = result.get('points')
-                if not isinstance(result.get('achievement'), str) or not result['achievement'].strip() or type(points) not in (int, float) or not 0 <= points < float('inf'):
-                    raise Problem('Укажите достижение и неотрицательные баллы.')
-            result.update(auto_document_verified=False, type=kind, grades=grades, average=average, reviewed=data.get('complete') is True,
-                          auto_grades_verified=bool(grades) and all(row['auto_verified'] for row in grades))
-            if result.get('ocr'):
-                result['ocr']['accepted'] = sum(bool(row['auto_verified']) for row in grades)
-                result['ocr']['unresolved'] = sum(not (row['auto_verified'] or row.get('verified') is True) for row in grades)
-                result['ocr']['status'] = 'agreed' if result['auto_grades_verified'] else 'reviewed' if result['reviewed'] else 'needs_review'
+            result = apply_review(document['result'], data)
+            document['result'] = result
             self.save(document, 'ready' if result['reviewed'] else 'review')
             return self.document_result(document_id)
