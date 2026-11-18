@@ -39,7 +39,7 @@ def tesseract_node():
     return node, packages
 
 
-def recognize(engine, pages, models):
+def recognize(engine, pages):
     if engine != 'tesseract':
         raise ValueError('Unknown OCR engine')
     lines = []
@@ -47,23 +47,12 @@ def recognize(engine, pages, models):
     if not executable:
         root = Path(__file__).resolve().parent
         node, packages = tesseract_node()
-        project_tesseract = (root / 'ocr.cjs').is_file()
-        bridge = root / ('ocr.cjs' if project_tesseract else 'tesseract_bridge.cjs')
-        payload = pages if project_tesseract else {'pages': pages, 'models': str(models / 'tesseract')}
-        if project_tesseract:
-            process = worker('tesseract-node', [node, str(bridge), '--serve'],
-                             {**os.environ, 'NODE_PATH': str(packages), 'OCR_WORKER_PYTHON': sys.executable})
-            response = process.call(payload, timeout=100 + len(pages) * 45)
-            if not response.get('ok'):
-                raise RuntimeError('Tesseract failed')
-            recognized = response['pages']
-        else:
-            result = subprocess.run([node, str(bridge)], input=json.dumps(payload),
-                                    text=True, encoding='utf-8', capture_output=True, check=True,
-                                    timeout=100 + len(pages) * 45, env={**os.environ, 'NODE_PATH': str(packages)})
-            recognized = json.loads(result.stdout)
-        if not project_tesseract:
-            return recognized
+        process = worker('tesseract-node', [node, str(root / 'ocr.cjs'), '--serve'],
+                         {**os.environ, 'NODE_PATH': str(packages), 'OCR_WORKER_PYTHON': sys.executable})
+        response = process.call(pages, timeout=100 + len(pages) * 45)
+        if not response.get('ok'):
+            raise RuntimeError('Tesseract failed')
+        recognized = response['pages']
         for page, blocks in zip(pages, recognized):
             for block in blocks:
                 w, h = page['width'], page['height']
@@ -113,8 +102,7 @@ if __name__ == '__main__':
                 try:
                     payload = json.loads(line)
                     with contextlib.redirect_stdout(sys.stderr):
-                        models = Path(payload['models'])
-                        answer = recognize(sys.argv[1], payload['pages'], models)
+                        answer = recognize(sys.argv[1], payload['pages'])
                     response = {'ok': True, 'lines': answer}
                 except Exception:
                     response = {'ok': False, 'lines': []}
@@ -124,5 +112,5 @@ if __name__ == '__main__':
     else:
         payload = json.load(sys.stdin)
         with contextlib.redirect_stdout(sys.stderr):
-            answer = recognize(sys.argv[1], payload['pages'], Path(payload['models']))
+            answer = recognize(sys.argv[1], payload['pages'])
         print(json.dumps(answer, ensure_ascii=False))
