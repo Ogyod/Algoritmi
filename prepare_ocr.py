@@ -1,22 +1,47 @@
-"""Prepare the Russian RapidOCR weights used inside Docling."""
+"""Download and verify the Russian OCR weights used by Docling."""
+from hashlib import file_digest
 from pathlib import Path
-from rapidocr import RapidOCR, OCRVersion, ModelType, LangRec
+from shutil import copyfileobj
+from urllib.request import urlopen
+
+from docling_worker import rapid_model_paths
 
 ROOT = Path(__file__).resolve().parent
+MODEL_URL = 'https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/'
+ARTIFACTS = {
+    'ch_PP-OCRv5_det_mobile.onnx': (
+        'PP-OCRv5/det', '4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae'),
+    'ch_ppocr_mobile_v2.0_cls_mobile.onnx': (
+        'PP-OCRv4/cls', 'e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c'),
+    'eslav_PP-OCRv5_rec_mobile.onnx': (
+        'PP-OCRv5/rec', '08705d6721849b1347d26187f15a5e362c431963a2a62bfff4feac578c489aab'),
+}
 
 
-def main():
-    directory = ROOT / '.ocr-models' / 'rapid'
-    directory.mkdir(parents=True, exist_ok=True)
-    RapidOCR(params={'Global.model_root_dir': str(directory),
-                     'Det.ocr_version': OCRVersion.PPOCRV5, 'Det.model_type': ModelType.MOBILE,
-                     'Rec.ocr_version': OCRVersion.PPOCRV5, 'Rec.model_type': ModelType.MOBILE,
-                     'Rec.lang_type': LangRec.ESLAV})
-    from docling_worker import rapid_model_paths
-    for path in rapid_model_paths(directory.parent):
-        if not path.is_file():
-            raise FileNotFoundError(f'Не подготовлена модель Docling: {path.name}')
+def matches(path, expected):
+    if not path.is_file():
+        return False
+    with path.open('rb') as model:
+        return file_digest(model, 'sha256').hexdigest() == expected
+
+
+def prepare(path):
+    subdir, checksum = ARTIFACTS[path.name]
+    if matches(path, checksum):
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(f'Скачиваю модель OCR: {path.name}', flush=True)
+    partial = path.with_suffix('.onnx.part')
+    try:
+        with urlopen(f'{MODEL_URL}{subdir}/{path.name}', timeout=90) as response, partial.open('wb') as out:
+            copyfileobj(response, out)
+        if not matches(partial, checksum):
+            raise ValueError(f'Контрольная сумма модели не совпала: {path.name}')
+        partial.replace(path)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 if __name__ == '__main__':
-    main()
+    for model in rapid_model_paths(ROOT / '.ocr-models'):
+        prepare(model)
