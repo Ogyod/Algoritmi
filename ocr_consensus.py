@@ -9,7 +9,7 @@ import unicodedata
 WORDS = {'отлично': 5, 'хорошо': 4, 'удовлетворительно': 3, 'неудовлетворительно': 2}
 OCR_THRESHOLD = .80
 WORD_PATTERN = '|'.join(sorted(WORDS, key=len, reverse=True))
-GRADE_END = re.compile(r'^(.+?)\s+(?:([2-5зЗ?])(?:\s*\(?(' + WORD_PATTERN + r')\)?)?|(' + WORD_PATTERN + r'))\s*[.;,]?$', re.I)
+GRADE_END = re.compile(r'^(.+?)\s+(?:([2-5зЗ?])(?:\s*\(?(' + WORD_PATTERN + r')\)?)?|(' + WORD_PATTERN + r'))\s*[.;,_|]*$', re.I)
 SUBJECT_HINTS = ('математик', 'алгебр', 'геометри', 'русский язык', 'литератур', 'истори', 'обществознан',
                  'физик', 'хими', 'биологи', 'географи', 'информатик', 'иностранный язык', 'английск',
                  'немецк', 'французск', 'физическая культура', 'безопасности', 'технологи', 'астрономи',
@@ -18,6 +18,14 @@ SUBJECT_HINTS = ('математик', 'алгебр', 'геометри', 'ру
 
 def normalized(text):
     return ' '.join(re.sub(r'[^\w\s]', ' ', unicodedata.normalize('NFKC', str(text)).casefold().replace('ё', 'е')).split())
+
+
+def _same_band(first, second):
+    overlap = min(first[3], second[3]) - max(first[1], second[1])
+    # A tall scan artifact can overlap several rows. Compare with the taller
+    # box so it cannot be used as the anchor for the entire subject column.
+    height = max(first[3] - first[1], second[3] - second[1])
+    return height > 0 and overlap > .55 * height
 
 
 def _ordered_fragments(lines):
@@ -29,8 +37,7 @@ def _ordered_fragments(lines):
             for band in reversed(bands[-6:]):
                 other = band[0].get('box')
                 if other and band[0]['page'] == line['page']:
-                    overlap = min(box[3], other[3]) - max(box[1], other[1])
-                    if overlap > .55 * min(box[3] - box[1], other[3] - other[1]):
+                    if _same_band(box, other):
                         target = band
                         break
         if target is None:
@@ -49,10 +56,9 @@ def parse_lines(lines, subject_hints=()):
         previous = merged[-1] if merged else None
         if box and previous and previous.get('box') and previous['page'] == line['page']:
             other = previous['box']
-            overlap = min(box[3], other[3]) - max(box[1], other[1])
             # Stop after a complete pair: the next fragment can be another table column.
             if (not GRADE_END.match(previous['text'].strip()) and
-                    overlap > .55 * min(box[3] - box[1], other[3] - other[1]) and box[0] >= other[2] - 2):
+                    _same_band(box, other) and box[0] >= other[2] - 2):
                 previous['text'] += ' ' + line['text']
                 previous['box'] = [other[0], min(other[1], box[1]), box[2], max(other[3], box[3])]
                 previous['confidence'] = min(previous.get('confidence', 0), line.get('confidence', 0))
@@ -149,6 +155,7 @@ def reconcile(observations, threshold=OCR_THRESHOLD, parser=None):
         row['supporting_engines'] = list(winning_votes)
         row['issue'] = '' if accepted else ('Повтор предмета в результате OCR.' if bucket['duplicate'] else
                                            'Уверенные OCR дали разные оценки.' if high_conflict else
+                                           'Оценка не прочитана.' if not numeric_votes else
                                            'Ни один OCR не достиг порога уверенности.')
         row['conflict'] = high_conflict or (not accepted and suggested is None)
         identity = {'page': row['page'], 'subject': row['subject'], 'votes': bucket['votes']}
