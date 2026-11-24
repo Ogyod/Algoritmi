@@ -14,7 +14,7 @@ from uploads import EXTENSIONS, MAX_FILE, MAX_FILES, MAX_UPLOAD, Problem, safe_n
 
 FIELDS = ('series', 'number', 'average_grade', 'region_code')
 GRADE_FIELD = 'average_grade'
-OCR_RESULT_VERSION = 2
+OCR_RESULT_VERSION = 3
 START = re.compile(r'наименован[иея]+ учебных предметов|итогов\w* (?:отмет\w*|оцен\w*)')
 END = re.compile(r'\bдополнительные сведения\b')
 APPENDIX = re.compile(r'\bприложение к аттестату\b')
@@ -120,11 +120,6 @@ def sections(lines):
     return start, end
 
 
-def page_title(lines):
-    text = ' '.join(line['text'] for line in lines)
-    return classify(text) if not APPENDIX.search(normalized(text)) else 'unknown'
-
-
 def standalone_series(lines):
     for index, line in enumerate(lines):
         text = line['text'].strip()
@@ -217,11 +212,17 @@ def analyze(recognition, pages, full):
         return manual('foreign', 'Иностранный аттестат или перевод обрабатывается вручную.', cacheable=True)
     title_readings = {}
     types = set()
+    appendix_types = set()
     for lines in readings:
         for page in {line['page'] for line in lines}:
             page_lines = [line for line in lines if line['page'] == page]
-            kind = page_title([line for line in page_lines if line['confidence'] >= OCR_THRESHOLD])
-            if kind in CERTIFICATE_TYPES:
+            text = ' '.join(line['text'] for line in page_lines if line['confidence'] >= OCR_THRESHOLD)
+            kind = classify(text)
+            if kind not in CERTIFICATE_TYPES:
+                continue
+            if APPENDIX.search(normalized(text)):
+                appendix_types.add(kind)
+            else:
                 types.add(kind)
                 title_readings.setdefault(page, []).append(page_lines)
     if len(title_readings) > 1:
@@ -230,9 +231,11 @@ def analyze(recognition, pages, full):
     if len(types) != 1:
         return manual('unknown', 'Не удалось уверенно определить тип российского аттестата по титульной части.',
                       cacheable=all_read)
+    kind = next(iter(types))
+    if appendix_types - {kind}:
+        return manual(kind, 'Вид образования в аттестате и приложении различается.', cacheable=all_read)
     title_page, title_readings = next(iter(title_readings.items()))
     fields = read_identifiers(title_readings)
-    kind = next(iter(types))
     if full and fields.get('number'):
         for lines in readings:
             other_pages = [line for line in lines if line['page'] != title_page]
