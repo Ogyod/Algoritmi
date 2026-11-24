@@ -14,9 +14,11 @@ from uploads import EXTENSIONS, MAX_FILE, MAX_FILES, MAX_UPLOAD, Problem, safe_n
 
 FIELDS = ('series', 'number', 'average_grade', 'region_code')
 GRADE_FIELD = 'average_grade'
+OCR_RESULT_VERSION = 2
 START = re.compile(r'наименован[иея]+ учебных предметов|итогов\w* (?:отмет\w*|оцен\w*)')
 END = re.compile(r'\bдополнительные сведения\b')
 APPENDIX = re.compile(r'\bприложение к аттестату\b')
+APPENDIX_NUMBER = re.compile(r'\bномер (?:бланка )?аттестата\b', re.I)
 FOREIGN = re.compile(r'нотариальн\w* перевод|перевод с .{2,40} языка|'
                      r'\b(?:high school diploma|general certificate of secondary education)\b')
 PAGINATION = re.compile(r'\b(?:страница|стр|лист)\.?\s*(\d+)\s*(?:из|/)\s*(\d+)\b', re.I)
@@ -213,7 +215,7 @@ def analyze(recognition, pages, full):
         return {'type': 'unknown', 'issues': {'document': 'Текст документа не читается.'}, 'fields': {}, 'cacheable': False}
     if any(FOREIGN.search(normalized(' '.join(line['text'] for line in lines))) for lines in readings):
         return manual('foreign', 'Иностранный аттестат или перевод обрабатывается вручную.', cacheable=True)
-    title_readings = []
+    title_readings = {}
     types = set()
     for lines in readings:
         for page in {line['page'] for line in lines}:
@@ -221,11 +223,24 @@ def analyze(recognition, pages, full):
             kind = page_title([line for line in page_lines if line['confidence'] >= OCR_THRESHOLD])
             if kind in CERTIFICATE_TYPES:
                 types.add(kind)
-                title_readings.append(page_lines)
+                title_readings.setdefault(page, []).append(page_lines)
+    if len(title_readings) > 1:
+        return manual('unknown', 'Под одним ID найдено несколько титульных листов аттестатов.',
+                      cacheable=all_read)
     if len(types) != 1:
         return manual('unknown', 'Не удалось уверенно определить тип российского аттестата по титульной части.',
                       cacheable=all_read)
+    title_page, title_readings = next(iter(title_readings.items()))
     fields = read_identifiers(title_readings)
+    kind = next(iter(types))
+    if full and fields.get('number'):
+        for lines in readings:
+            other_pages = [line for line in lines if line['page'] != title_page]
+            for candidate in extract_identifiers(other_pages)[0]['identifier_candidates']:
+                if (candidate['confidence'] >= OCR_THRESHOLD and APPENDIX_NUMBER.search(candidate['source'])
+                        and candidate['number'] != fields['number']):
+                    return manual(kind, 'Номер аттестата на титульном листе и в приложении различается.',
+                                  cacheable=all_read)
     codes = {code for lines in title_readings for code in issuing_region(lines)}
     if len(codes) == 1:
         fields['region_code'] = codes.pop()
@@ -237,7 +252,7 @@ def analyze(recognition, pages, full):
             issues[GRADE_FIELD] = reason
         else:
             fields[GRADE_FIELD] = value
-    return {'type': types.pop(), 'fields': fields, 'issues': issues, 'numbered_complete': numbered_complete, 'cacheable': all_read}
+    return {'type': kind, 'fields': fields, 'issues': issues, 'numbered_complete': numbered_complete, 'cacheable': all_read}
 
 
 def manual(kind, reason, *, cacheable=False):
