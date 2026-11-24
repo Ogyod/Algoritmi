@@ -25,8 +25,12 @@ import subprocess
 try:
     with urlopen('http://127.0.0.1:8765/api/health',timeout=2) as response:
         import json
-        if json.load(response).get('app') == 'admissions-document-processor':
-            subprocess.run(['open','http://127.0.0.1:8765'])
+        health = json.load(response)
+        if health.get('app') == 'admissions-document-processor':
+            if health.get('ocr_ready') and health.get('docling_ready'):
+                subprocess.run(['open','http://127.0.0.1:8765'], check=True)
+            else:
+                print('Сервер уже запущен, но OCR ещё не готов. Проверьте окно сервера.')
             raise SystemExit(0)
 except OSError:
     pass

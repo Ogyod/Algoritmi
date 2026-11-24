@@ -222,7 +222,7 @@ async function recognizeDocument(files, kind, progress, worker) {
   const result = await interpretDocument({pages, type: kind});
   result.engine = "Tesseract.js · браузер";
   acceptSingleOCR(result);
-  if (result.grades.length) result.warnings.push(result.auto_grades_verified
+  if (result.grades.length && !result.ocr?.incomplete_pages?.length) result.warnings.push(result.auto_grades_verified
     ? "Оценки приняты по уверенности OCR от 80%. Средний балл рассчитан автоматически."
     : "Строки с низкой уверенностью или неоднозначными данными требуют сверки по скану.");
   return result;

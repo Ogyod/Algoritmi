@@ -1,5 +1,6 @@
 """Attach independent OCR votes to Algoritmi's existing document interpretation."""
-from core import DOCUMENT_TYPES, CERTIFICATE_TYPES, SUBJECT_CATALOG, extract_grades, interpret_lines, mean_grade
+from core import (DOCUMENT_TYPES, CERTIFICATE_TYPES, SUBJECT_CATALOG, extract_grades,
+                  interpret_lines, mean_grade, require_page_review)
 from ocr_consensus import parse_lines, normalized
 
 SUBJECT_HINTS = tuple(normalized(alias) for name, aliases in SUBJECT_CATALOG.items() for alias in (name, *aliases))
@@ -32,13 +33,11 @@ def parse_engine_rows(lines):
     # Preserve additional unreadable/unknown rows found by the project's original parser.
     covered = {(row['page'], normalized(row['subject'])) for row in result}
     for parsed in extract_grades(lines):
-        line = next((line for line in lines if line['text'] == parsed['source']), None)
-        if line and (line['page'], normalized(parsed['subject'])) not in covered:
-            result.append({**parsed, 'page': line['page'], 'box': line.get('box'),
-                           'confidence': min(float(line.get('confidence', 0)),
-                                             1 if parsed['known_subject'] else .5),
+        key = parsed['page'], normalized(parsed['subject'])
+        if key not in covered:
+            result.append({**parsed,
                            'verified': False, 'include': True, 'reason': ''})
-            covered.add((line['page'], normalized(parsed['subject'])))
+            covered.add(key)
     return result
 
 
@@ -102,10 +101,7 @@ def interpret_consensus(recognition, kind='auto'):
         result['warnings'].append(f"Docling нашёл ещё {result['docling']['suggested']} строк(и) таблицы. Сверьте их со сканом.")
     if result['docling']['hints']:
         result['warnings'].append('Docling также проверил спорные строки. Сверьте подставленные оценки со сканом.')
-    if recognition['ocr']['incomplete_pages']:
-        result['grades_need_review'] = True
-        numbers = ', '.join(map(str, recognition['ocr']['incomplete_pages']))
-        result['warnings'].append(f'Требуют сверки страницы: {numbers}. Повторное чтение не удалось.')
+    require_page_review(result, recognition['ocr']['incomplete_pages'])
     # Missing identifiers do not block an agreed certificate; conflicting readings still do.
     result['reviewed'] = result['auto_document_verified']
     return result

@@ -105,6 +105,8 @@ class BatchService:
             document = self.get(document_id)
             result = document.get('result')
             calculation = None
+            if result and document['status'] == 'review' and (result.get('ocr') or {}).get('incomplete_pages'):
+                result = {**result, 'average': None, 'auto_grades_verified': False, 'grades_need_review': True}
             if result and result.get('average') is not None and (document['status'] == 'ready' or result.get('auto_grades_verified')):
                 values = [g['grade'] for g in result['grades']]
                 calculation = {'sum': sum(values), 'count': len(values), 'value': f'{result["average"]:.2f}'}

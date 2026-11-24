@@ -1,4 +1,4 @@
-"""Download and verify the Russian OCR weights used by Docling."""
+"""Prepare the local models used for Russian OCR, layout and grade tables."""
 from hashlib import file_digest
 from pathlib import Path
 from shutil import copyfileobj
@@ -43,5 +43,17 @@ def prepare(path):
 
 
 if __name__ == '__main__':
-    for model in rapid_model_paths(ROOT / '.ocr-models'):
+    from huggingface_hub import snapshot_download
+
+    models = ROOT / '.ocr-models'
+    for model in rapid_model_paths(models):
         prepare(model)
+    # These snapshots match the layout and FAST table models in docling_worker.py.
+    for repo, revision, patterns in (
+        ('docling-project/docling-layout-heron', '8f39ad3c0b4c58e9c2d2c84a38465abf757272d8',
+         ['*.json', 'model.safetensors', 'README*', 'LICENSE*']),
+        ('docling-project/docling-models', 'fc0f2d45e2218ea24bce5045f58a389aed16dc23',
+         ['model_artifacts/tableformer/fast/*', 'README*', 'LICENSE*']),
+    ):
+        snapshot_download(repo, revision=revision, allow_patterns=patterns,
+                          local_dir=models / 'docling' / repo.replace('/', '--'))

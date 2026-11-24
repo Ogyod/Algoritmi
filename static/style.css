@@ -196,9 +196,6 @@ h1 > span { color: var(--blue); }
 .how-number { padding-top: 2px; color: var(--pink); font-family: var(--display); font-size: 1rem; font-weight: 500; }
 .how-grid h3 { margin: 1px 0 9px; color: #365c7b; font-size: .875rem; }
 .how-grid p { max-width: 300px; color: #7b90a3; font-size: .75rem; }
-footer { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 23px 0 26px; border-top: 1px solid var(--border); color: #8297a9; font-size: .625rem; }
-footer > div { display: flex; align-items: center; gap: 20px; }
-footer strong { color: var(--blue); font-family: var(--display); font-size: .9375rem; font-weight: 750; }
 #toast { position: fixed; left: 50%; bottom: 25px; z-index: 10; transform: translateX(-50%); max-width: min(560px, 90vw); padding: 15px 20px; border-radius: 6px; background: #163e64; color: white; box-shadow: 0 6px 24px #18456530; font-size: .8125rem; line-height: 1.5; }
 @media (min-width: 1500px) {
   .hero-inner { padding-top: 40px; padding-bottom: 40px; }
@@ -295,9 +292,6 @@ footer strong { color: var(--blue); font-family: var(--display); font-size: .937
   .how-grid { grid-template-columns: 1fr; gap: 24px; margin-top: 24px; }
   .how-grid p { max-width: none; font-size: .8125rem; }
   .how-grid h3 { font-size: .9375rem; }
-  footer { align-items: flex-start; flex-direction: column; gap: 15px; padding: 22px 0; }
-  footer > div { align-items: flex-start; flex-direction: column; gap: 8px; }
-  footer > span, footer > div > span { font-size: .6875rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }

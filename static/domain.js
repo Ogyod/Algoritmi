@@ -54,8 +54,13 @@ export function meanGrade(grades) {
   return Math.floor((sum * 100 + grades.length / 2) / grades.length) / 100;
 }
 
+export function pendingReviewPages(result) {
+  return result?.reviewed ? [] : result?.ocr?.incomplete_pages ?? [];
+}
+
 export function resultAverage(result) {
-  return result.grades_need_review && !result.reviewed ? null : meanGrade(result.grades);
+  if (!result.reviewed && (result.grades_need_review || pendingReviewPages(result).length)) return null;
+  return meanGrade(result.grades);
 }
 
 export function invalidateGradeReview(result, index) {
@@ -99,11 +104,10 @@ export function reviewError(result) {
     if (result.series_not_present && result.document_series.trim())
       return "Уберите отметку об отсутствии серии или очистите поле серии.";
     if (
-      isCertificate(result.type) &&
-      result.grades.length &&
-      meanGrade(result.grades) === null
+      isCertificate(result.type) && meanGrade(result.grades) === null
     )
-      return "Проверьте предметы, оценки от 2 до 5 и повторяющиеся строки.";
+      return result.grades.length ? "Проверьте предметы, оценки от 2 до 5 и повторяющиеся строки."
+        : "Добавьте оценки из приложения к аттестату перед подтверждением.";
   } else {
     if (
       !result.achievement.trim() ||
@@ -121,7 +125,7 @@ export function acceptSingleOCR(result) {
     return {...row, auto_verified: accepted, verified: false,
       verification: accepted ? "ocr_high_confidence" : "manual_required"};
   });
-  const average = isCertificate(result.type) ? meanGrade(result.grades) : null;
+  const average = isCertificate(result.type) ? resultAverage(result) : null;
   result.auto_grades_verified = average !== null && result.grades.every(row => row.auto_verified);
   result.average = result.auto_grades_verified ? average : null;
   const identifiersConflict = (result.identifier_candidates?.length ?? 0) > 1;
@@ -133,13 +137,14 @@ export function acceptSingleOCR(result) {
 export function applyCategoryChange(previous, result) {
   result.pages = previous.pages;
   result.engine = previous.engine;
+  result.ocr = previous.ocr;
   if (isEducation(previous.type) && isEducation(result.type)) {
     for (const field of ["document_series", "document_number", "series_not_present"])
       result[field] = previous[field];
   }
   if (hasGradeTable(result.type)) {
     if (hasGradeTable(previous.type)) {
-      for (const field of ["grades", "ocr", "docling", "auto_grades_verified", "grades_need_review"])
+      for (const field of ["grades", "docling", "auto_grades_verified", "grades_need_review"])
         result[field] = previous[field];
     } else {
       result.grades = result.grades.map(row => ({...row,

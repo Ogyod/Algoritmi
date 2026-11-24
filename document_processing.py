@@ -30,10 +30,10 @@ def process(data, kind):
 def pdf_render_scale(page, width, height):
     scale = min(300 / 72, 3600 / width, 4800 / height)
     try:
-        objects = list(page.get_objects())
-        if len(objects) != 1 or not isinstance(objects[0], pdfium.PdfImage):
+        objects = iter(page.get_objects())
+        image = next(objects, None)
+        if not isinstance(image, pdfium.PdfImage) or next(objects, None) is not None:
             return scale
-        image = objects[0]
         left, bottom, right, top = image.get_bounds()
         image_width, image_height = right - left, top - bottom
         if image_width <= 0 or image_height <= 0 or image_width * image_height < .8 * width * height:
@@ -81,7 +81,9 @@ def process_group(files, kind):
             number = len(pages) + 1
             if number > MAX_PAGES:
                 raise ValueError('В одном документе допускается до 20 страниц.')
-            image = ImageOps.exif_transpose(image).convert('RGB')
+            ImageOps.exif_transpose(image, in_place=True)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
             image.thumbnail((3600, 4800))
             if pdf_reading is not None:
                 images.append({'page': number, 'pdf_reading': pdf_reading})

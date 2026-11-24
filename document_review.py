@@ -49,7 +49,9 @@ def apply_review(previous, data):
                                         for row in grades)
     if complete and grades and not can_calculate:
         raise Problem('Проверьте оценки от 2 до 5 и их подтверждение.')
-    average = mean_grade(grades) if can_calculate and kind in CERTIFICATE_TYPES else None
+    incomplete = (previous.get('ocr') or {}).get('incomplete_pages', [])
+    pages_need_review = bool(incomplete) and not complete
+    average = mean_grade(grades) if can_calculate and kind in CERTIFICATE_TYPES and not pages_need_review else None
     if complete and kind in CERTIFICATE_TYPES and not grades:
         raise Problem('Для расчёта аттестата нужен полный список оценок.')
     for field in ('document_series', 'document_number', 'series_not_present', 'achievement', 'points'):
@@ -69,7 +71,8 @@ def apply_review(previous, data):
         if not isinstance(result.get('achievement'), str) or not result['achievement'].strip() or type(points) not in (int, float) or not 0 <= points < float('inf'):
             raise Problem('Укажите достижение и неотрицательные баллы.')
     result.update(auto_document_verified=False, type=kind, grades=grades, average=average, reviewed=complete,
-                  auto_grades_verified=bool(grades) and all(row['auto_verified'] for row in grades))
+                  grades_need_review=pages_need_review,
+                  auto_grades_verified=not incomplete and bool(grades) and all(row['auto_verified'] for row in grades))
     if result.get('ocr'):
         result['ocr'] = {
             **result['ocr'],

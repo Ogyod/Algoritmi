@@ -16,6 +16,7 @@ DOCUMENT_TYPES = {
 }
 EDUCATION_TYPES = set(DOCUMENT_TYPES) - {'achievement'}
 CERTIFICATE_TYPES = {'certificate_9', 'certificate_11'}
+OCR_THRESHOLD = .80
 SUBJECT_CATALOG = json.loads(Path(__file__).with_name('subjects.json').read_text(encoding='utf-8'))
 SUBJECT_PATTERNS = sorted(
     [(name, re.compile(r'(?<!\w)' + re.escape(normalize_name) + r'(?!\w)'))
@@ -29,6 +30,10 @@ GRADE_WORDS = {'отлично': 5, 'хорошо': 4, 'удовлетворит
 
 def normalize(text):
     return re.sub(r'\s+', ' ', text.lower().replace('ё', 'е')).strip()
+
+
+def has_grade_heading(text):
+    return bool(re.search(r'наименование учебных предметов|итогов\w* (?:отмет|оцен)', normalize(text)))
 
 
 def mean_grade(grades):
@@ -62,8 +67,7 @@ def group_lines(blocks):
 def extract_grades(lines):
     result = []
     table_pages = {line.get('page', 1) for line in lines
-                   if re.search(r'наименование учебных предметов|итогов\w* (?:отмет|оцен)',
-                                normalize(line['text']))}
+                   if has_grade_heading(line['text'])}
     for line in lines:
         text = normalize(line['text'])
         match = next(((name, m) for name, pattern in SUBJECT_PATTERNS
@@ -103,7 +107,8 @@ def extract_grades(lines):
             continue
         conflict = len(values) > 1 or any(digit not in {'2', '3', '4', '5'} for digit in digits)
         grade = next(iter(values)) if len(values) == 1 and not conflict else None
-        result.append({'subject': subject, 'grade': grade,
+        result.append({'subject': subject, 'grade': grade, 'page': line.get('page', 1),
+                       'box': line.get('box'),
                        'confidence': min(line.get('confidence', 0),
                                          1 if known_subject else .5),
                        'known_subject': known_subject,
@@ -242,6 +247,54 @@ def extract_identifiers(lines):
             'series_not_present': False, 'identifier_candidates': candidates}, warnings
 
 
+def is_non_grade_page(lines):
+    """Recognize a cover or achievement from reliable text on this page."""
+    reliable = [line for line in lines if line.get('confidence', 0) >= OCR_THRESHOLD]
+    text = '\n'.join(line['text'] for line in reliable)
+    kind = classify(text)
+    if kind == 'achievement':
+        return True
+    if kind not in EDUCATION_TYPES:
+        return False
+    identifiers, _ = extract_identifiers(reliable)
+    cover_text = re.search(r'\b(?:дата рождения|настоящий аттестат|настоящий диплом|выдан[ао]?|дата выдачи)\b',
+                           normalize(text))
+    return bool(identifiers['document_number'] or cover_text)
+
+
+def pages_needing_review(page_numbers, readings, grades):
+    """A page must contain a usable grade or evidence of a page without grades."""
+    grade_pages = {row['page'] for row in grades
+                   if type(row['grade']) is int and 2 <= row['grade'] <= 5 and not row['conflict']}
+    candidate_pages = {row['page'] for row in grades}
+    readings_by_page = {}
+    for reading in readings:
+        by_page = {}
+        for line in reading:
+            by_page.setdefault(line['page'], []).append(line)
+        for number, lines in by_page.items():
+            readings_by_page.setdefault(number, []).append(lines)
+
+    incomplete = []
+    for number in page_numbers:
+        if number in grade_pages:
+            continue
+        page_readings = readings_by_page.get(number, [])
+        has_heading = any(has_grade_heading('\n'.join(line['text'] for line in lines))
+                          for lines in page_readings)
+        if number in candidate_pages or has_heading or not any(is_non_grade_page(lines) for lines in page_readings):
+            incomplete.append(number)
+    return incomplete
+
+
+def require_page_review(result, incomplete):
+    if incomplete:
+        result['grades_need_review'] = True
+        result['average'] = None
+        numbers = ', '.join(map(str, incomplete))
+        result['warnings'].append(f'OCR не подтвердил назначение или оценки на страницах: {numbers}.')
+
+
 def interpret_lines(lines, requested_type='auto'):
     if not isinstance(requested_type, str) or (requested_type != 'auto' and requested_type not in DOCUMENT_TYPES):
         raise ValueError('Неизвестный тип документа.')
@@ -287,8 +340,15 @@ def interpret_lines(lines, requested_type='auto'):
 
 def interpret(pages, requested_type='auto'):
     lines = []
+    page_grades = []
     for page in pages:
-        lines.extend({**row, 'page': page['number']} for row in group_lines(page['blocks']))
+        number = page['number']
+        page_lines = [{**row, 'page': number} for row in group_lines(page['blocks'])]
+        lines.extend(page_lines)
+        page_grades.extend(extract_grades(page_lines))
     result = interpret_lines(lines, requested_type)
+    incomplete = pages_needing_review((page['number'] for page in pages), [lines], page_grades)
+    result['ocr'] = {'incomplete_pages': incomplete}
+    require_page_review(result, incomplete)
     result['pages'] = [{k: v for k, v in page.items() if k != 'blocks'} for page in pages]
     return result

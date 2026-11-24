@@ -5,6 +5,7 @@ import {
   isEducation,
   hasGradeTable,
   resultAverage,
+  pendingReviewPages,
   invalidateGradeReview,
   confirmReview,
   applyCategoryChange,
@@ -158,14 +159,23 @@ function educationalFields(result) {
   </div>`;
 }
 
-function gradeTable(result) {
-  const categoryPending = result.type === "education_unknown";
-  const average = categoryPending ? null : resultAverage(result);
+function gradeHint(result, average) {
+  if (result.type === "education_unknown") return "Выберите категорию аттестата для расчёта среднего балла";
+  const pages = pendingReviewPages(result);
+  if (pages.length) return `Средний балл появится после сверки страниц ${pages.join(", ")}`;
+  if (!result.grades.length) return "Нужно приложение с оценками";
+  if (average == null) return "Проверьте жёлтые строки по скану для расчёта среднего балла";
   const sum = result.grades.reduce(
     (n, row) => n + (Number.isFinite(row.grade) ? row.grade : 0),
     0,
   );
-  return `<div class="average-card"><div><span>${categoryPending ? "Найденные оценки" : "Средний балл этого аттестата"}</span><small id="grade-formula">${categoryPending ? "Выберите категорию аттестата для расчёта среднего балла" : !result.grades.length ? "Нужно приложение с оценками" : average == null ? "Проверьте жёлтые строки по скану для расчёта среднего балла" : `${sum} ÷ ${result.grades.length} предметов`}</small></div><strong id="doc-average">${format(average)}</strong></div>
+  return `${sum} ÷ ${result.grades.length} предметов`;
+}
+
+function gradeTable(result) {
+  const categoryPending = result.type === "education_unknown";
+  const average = categoryPending ? null : resultAverage(result);
+  return `<div class="average-card"><div><span>${categoryPending ? "Найденные оценки" : "Средний балл этого аттестата"}</span><small id="grade-formula">${escapeHTML(gradeHint(result, average))}</small></div><strong id="doc-average">${format(average)}</strong></div>
     <table class="grade-table"><thead><tr><th>Предмет</th><th>Оценка</th><th></th></tr></thead><tbody>
     ${result.grades
       .map(
@@ -181,6 +191,12 @@ function gradeTable(result) {
     </tbody></table><button id="add-grade" class="text-button add-grade">+ Добавить предмет</button>`;
 }
 
+function reviewButtonLabel(result) {
+  if (result?.reviewed) return result.auto_document_verified ? "Принят автоматически" : "Проверка подтверждена";
+  const pages = pendingReviewPages(result);
+  return pages.length ? `Подтвердить сверку, включая страницы ${pages.join(", ")}` : "Подтвердить проверку документа";
+}
+
 function renderResults() {
   const file = selected(),
     result = file?.result;
@@ -191,9 +207,7 @@ function renderResults() {
   }
   $("review-actions").hidden =
     !result || !Object.hasOwn(DOCUMENT_TYPES, result.type);
-  $("confirm").textContent = result?.reviewed
-    ? (result.auto_document_verified ? "Принят автоматически" : "Проверка подтверждена")
-    : "Подтвердить проверку документа";
+  $("confirm").textContent = reviewButtonLabel(result);
   $("confirm").disabled = !!result?.reviewed || state.busy;
   $("review-state").textContent = result
     ? result.reviewed
@@ -269,16 +283,11 @@ function edit() {
   $("review-state").textContent = "Нужна проверка";
   $("review-state").className = "badge warning";
   $("confirm").disabled = false;
-  $("confirm").textContent = "Подтвердить проверку документа";
+  $("confirm").textContent = reviewButtonLabel(result);
   if (isCertificate(result.type) && $("doc-average")) {
-    $("doc-average").textContent = format(resultAverage(result));
-    const sum = result.grades.reduce(
-      (n, row) => n + (Number.isFinite(row.grade) ? row.grade : 0),
-      0,
-    );
-    $("grade-formula").textContent = result.grades.length
-      ? `${sum} ÷ ${result.grades.length} предметов`
-      : "Добавьте оценки";
+    const average = resultAverage(result);
+    $("doc-average").textContent = format(average);
+    $("grade-formula").textContent = gradeHint(result, average);
   }
 }
 

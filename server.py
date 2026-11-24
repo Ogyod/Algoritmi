@@ -13,7 +13,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from core import interpret_lines
 from document_processing import MAX_PAGES, process, process_group
-from ocr_engines import MODEL_ROOT
+from ocr_engines import MODEL_ROOT, warmup_docling, warmup_tesseract
 from ocr_process import shutdown_workers
 from ocr_worker import native_tesseract, tesseract_node
 from uploads import MAX_FILE, Problem, unpack_archive
@@ -34,7 +34,7 @@ def engine():
     tesseract = bool(native and (Path(native).is_file() or shutil.which(native))) if native else tesseract_js_available()
     docling = (MODEL_ROOT / 'docling').is_dir() and (MODEL_ROOT / 'rapid').is_dir()
     if docling and tesseract:
-        return 'Docling → Tesseract'
+        return 'Tesseract → Docling'
     if docling:
         return 'Docling'
     if tesseract:
@@ -221,24 +221,34 @@ def main():
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--open', action='store_true', help='Open the local interface in the browser')
     args = parser.parse_args()
-    server = make_server(args.port)
-    from ocr_engines import warmup_docling
-    def prepare():
-        server.docling_ready = warmup_docling()
-        server.ocr_ready = server.docling_ready or bool(native_tesseract() or tesseract_js_available())
-        print('Docling: готов к обработке' if server.docling_ready else 'Docling: проверьте локальные модели', flush=True)
-    threading.Thread(target=prepare, daemon=True, name='ocr-warmup').start()
-    print(f'Приём · Документы: http://127.0.0.1:{args.port}', flush=True)
-    print(f'OCR: {engine() or "не настроен"}', flush=True)
-    if args.open:
-        import webbrowser
-        threading.Timer(.7, lambda: webbrowser.open(f'http://127.0.0.1:{args.port}')).start()
+    server = None
+    browser_timer = None
     try:
+        for name, warmup in (('Tesseract', warmup_tesseract), ('Docling', warmup_docling)):
+            print(f'{name}: прогрев на учебном образце…', flush=True)
+            if not warmup():
+                raise SystemExit(f'{name}: не удалось завершить прогрев. Проверьте установку через '
+                                 'setup_ocr.ps1 (Windows) или setup_ocr.sh (macOS/Linux).')
+            print(f'{name}: готов к обработке', flush=True)
+        server = make_server(args.port)
+        server.ocr_ready = server.docling_ready = True
+        address = f'http://127.0.0.1:{server.server_port}'
+        print(f'Приём · Документы: {address}', flush=True)
+        if args.open:
+            import webbrowser
+            browser_timer = threading.Timer(.7, webbrowser.open, args=(address,))
+            browser_timer.daemon = True
+            browser_timer.start()
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
+        if browser_timer is not None:
+            browser_timer.cancel()
+        if server is not None:
+            server.server_close()
+        else:
+            shutdown_workers()
 
 
 if __name__ == '__main__':

@@ -27,5 +27,3 @@ else
 fi
 npm install --ignore-scripts --no-audit --no-fund
 .ocr-venv/bin/python -X utf8 prepare_ocr.py
-.ocr-venv/bin/docling-tools models download layout tableformer \
-  --output-dir "$PWD/.ocr-models/docling"

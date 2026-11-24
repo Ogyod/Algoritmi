@@ -7,12 +7,14 @@ import sys
 import time
 from queue import Empty
 from ocr_process import worker
-from ocr_consensus import OCR_THRESHOLD, reconcile, parse_lines
-from core import DOCUMENT_TYPES, classify, extract_identifiers, normalize
+from ocr_consensus import GRADE_END, OCR_THRESHOLD, reconcile, parse_lines
+from core import (DOCUMENT_TYPES, classify, extract_identifiers, has_grade_heading,
+                  is_non_grade_page, pages_needing_review)
 from ocr_consensus import normalized
 
 ROOT = Path(__file__).resolve().parent
 MODEL_ROOT = Path(os.environ.get('OCR_MODEL_DIR', ROOT / '.ocr-models'))
+WARMUP_SAMPLE = ROOT / 'samples/certificate_9.png'
 
 
 def worker_python():
@@ -26,14 +28,14 @@ def worker_python():
     return sys.executable
 
 
-def run_engine(engine, pages):
+def run_engine(engine, pages, timeout=None):
     start = time.perf_counter()
     try:
         process = worker(engine, [worker_python(), '-u', '-X', 'utf8',
                                  str(ROOT / 'ocr_worker.py'), engine, '--serve'],
                          {**os.environ, 'PYTHONIOENCODING': 'utf-8'})
         result = process.call({'pages': pages},
-                              timeout=120 + 60 * len(pages))
+                              timeout=timeout or 120 + 60 * len(pages))
         if not result.get('ok'):
             raise ValueError('Unavailable OCR engine')
         return {'engine': engine, 'ok': True, 'lines': result['lines'], 'error': '',
@@ -61,13 +63,27 @@ def run_docling(pages, timeout=None):
     return {'ok': False, 'pages': [], 'error': 'Docling недоступен. Проверьте подготовку моделей.'}
 
 
+def warmup_tesseract():
+    """Give Tesseract.js enough pages to initialize both page workers."""
+    from PIL import Image
+
+    try:
+        with Image.open(WARMUP_SAMPLE) as image:
+            width, height = image.size
+    except OSError:
+        return False
+    pages = [{'page': number, 'path': str(WARMUP_SAMPLE), 'width': width, 'height': height}
+             for number in (1, 2)]
+    result = run_engine('tesseract', pages, timeout=120)
+    return result['ok'] and {line['page'] for line in result['lines'] if line['text'].strip()} == {1, 2}
+
+
 def warmup_docling():
     """Run the real image pipeline once, then keep its worker and models in memory."""
-    sample = ROOT / 'samples/certificate_9.png'
-    if not sample.is_file():
+    if not WARMUP_SAMPLE.is_file():
         return False
-    result = run_docling([{'page': 1, 'path': str(sample)}], timeout=300)
-    return any(page['lines'] for page in result.get('pages', []))
+    result = run_docling([{'page': 1, 'path': str(WARMUP_SAMPLE)}], timeout=300)
+    return result['ok'] and any(page['complete'] and page['lines'] for page in result['pages'])
 
 
 def add_docling_suggestions(rows, table_rows, parser):
@@ -115,39 +131,46 @@ def add_docling_suggestions(rows, table_rows, parser):
     return added, hints
 
 
+def has_unpaired_grade(lines, rows):
+    """A grade in its own OCR cell should be covered by a parsed row's box."""
+    boxes = [row['box'] for row in rows if row.get('box')]
+    for line in lines:
+        match = GRADE_END.fullmatch('Предмет ' + line['text'].strip())
+        if not match or match[1] != 'Предмет':
+            continue
+        box = line.get('box')
+        if not box or not any(left <= box[0] and top <= box[1] and
+                              right >= box[2] and bottom >= box[3]
+                              for left, top, right, bottom in boxes):
+            return True
+    return False
+
+
 def usable_page(page, parser, requested_type, embedded_text=False):
     lines = page['lines']
-    if not page['complete'] or not any(any(c.isalpha() for c in line['text']) for line in lines):
-        return False
-    if any(line['confidence'] < OCR_THRESHOLD for line in lines):
+    if not page['complete'] or not lines:
         return False
     text = '\n'.join(line['text'] for line in lines)
-    detected = classify(text)
-    rows = reconcile([{'ok': True, 'engine': 'docling', 'lines': lines}], parser=parser)
+    reliable = [line for line in lines if line['confidence'] >= OCR_THRESHOLD]
+    detected = classify('\n'.join(line['text'] for line in reliable))
     if requested_type not in ('auto', detected) and detected in DOCUMENT_TYPES:
         return False
-    grade_heading = ('итоговые оценки' in normalize(text) or
-                     'наименование учебных предметов' in normalize(text))
+    engine = 'pdf_text' if embedded_text else 'tesseract'
+    rows = reconcile([{'ok': True, 'engine': engine, 'lines': lines}], parser=parser)
+    grade_heading = has_grade_heading(text)
     if rows:
-        if embedded_text and not grade_heading:
-            return False
-        if not page['table'] and len(rows) < 8 and not embedded_text:
-            return False
-        if any(not row['auto_verified'] for row in rows):
-            return False
-        pairs = {(normalized(row['subject']), row['grade']) for row in rows}
-        for entry in page['table']:
-            for row in parser([{'text': entry, 'page': page['page'], 'confidence': 0}]):
-                if (normalized(row['subject']), row['grade']) not in pairs:
-                    return False
-        return True
-    if grade_heading:
+        enough_rows = grade_heading if embedded_text else len(rows) >= 8
+        return (enough_rows and all(row['auto_verified'] for row in rows)
+                and not has_unpaired_grade(lines, rows))
+    if grade_heading or not is_non_grade_page(lines):
         return False
-    if detected == 'achievement':
+    if embedded_text or detected == 'achievement':
         return True
-    if detected in DOCUMENT_TYPES or detected == 'education_unknown':
-        return bool(extract_identifiers(lines)[0]['document_number'])
-    return False
+    seen, _ = extract_identifiers(lines)
+    verified, _ = extract_identifiers(reliable)
+    return (len(seen['identifier_candidates']) <= 1
+            and seen['document_number'] == verified['document_number']
+            and seen['document_series'] == verified['document_series'])
 
 
 def recognize_document(pages, runner=None, parser=None, include_observations=False,
@@ -160,29 +183,47 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
     if digital:
         observations.append({'engine': 'pdf_text', 'ok': True, 'error': '',
                              'lines': [line for p in digital for line in p['lines']]})
-    started = time.perf_counter()
-    response = (docling_runner or run_docling)(scans) if scans else {}
-    docling_seconds = round(time.perf_counter() - started, 3) if scans else 0
-    by_page = {p['page']: p for p in response.get('pages', [])}
-    primary = [line for p in by_page.values() for line in p['lines']]
+    tesseract_seconds = docling_seconds = 0
+    fallback = []
+    by_page = {}
+    lines_by_page = {}
+    docling_lines = []
     if scans:
-        observations.append({'engine': 'docling', 'ok': bool(primary), 'lines': primary,
-                             'error': '' if primary else 'Docling не прочитал текст.'})
-    fallback = [page for page in scans if page['page'] not in by_page
-                or not usable_page(by_page[page['page']], parser, requested_type)]
-    tesseract_seconds = 0
-    incomplete = []
+        started = time.perf_counter()
+        primary = runner('tesseract', scans)
+        tesseract_seconds = round(time.perf_counter() - started, 3)
+        observations.append(primary)
+        if primary['ok']:
+            for line in primary['lines']:
+                lines_by_page.setdefault(line['page'], []).append(line)
+        fallback = [page for page in scans if not usable_page(
+            {'complete': primary['ok'], 'lines': lines_by_page.get(page['page'], [])},
+            parser, requested_type)]
     if fallback:
         started = time.perf_counter()
-        secondary = runner('tesseract', fallback)
-        tesseract_seconds = round(time.perf_counter() - started, 3)
-        observations.append(secondary)
-        read_pages = {line['page'] for line in secondary['lines'] if line['text'].strip()}
-        incomplete = [p['page'] for p in fallback if p['page'] not in read_pages]
+        response = (docling_runner or run_docling)(fallback)
+        docling_seconds = round(time.perf_counter() - started, 3)
+        by_page = {page['page']: page for page in response.get('pages', [])}
+        docling_lines = [line for page in by_page.values() for line in page['lines']]
+        observations.append({'engine': 'docling', 'ok': bool(docling_lines), 'lines': docling_lines,
+                             'error': '' if docling_lines else response.get('error', 'Docling не прочитал текст.')})
     rows = reconcile(observations, parser=parser)
     table_rows = [{'page': page['page'], 'text': text}
                   for page in by_page.values() for text in page['table']]
     added, hints = add_docling_suggestions(rows, table_rows, parser)
+    incomplete = pages_needing_review((page['page'] for page in pages),
+                                     (o['lines'] for o in observations if o['ok']), rows)
+    for page in fallback:
+        number = page['page']
+        second_reading = by_page.get(number, {})
+        if second_reading.get('complete') and second_reading.get('lines'):
+            continue
+        lines = lines_by_page.get(number, [])
+        # Optional cover details do not block the grade calculation.
+        if not (is_non_grade_page(lines) and not parser(lines)
+                and not has_grade_heading('\n'.join(line['text'] for line in lines))):
+            incomplete.append(number)
+    incomplete = sorted(set(incomplete))
     accepted = sum(row['auto_verified'] for row in rows)
     summary = {'engines': [{'name': o['engine'], 'ok': o['ok'], 'error': o['error']}
                            for o in observations],
@@ -193,7 +234,7 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
                'threshold': OCR_THRESHOLD, 'accepted': accepted, 'unresolved': len(rows) - accepted,
                'status': 'accepted' if rows and accepted == len(rows) and not incomplete else 'needs_review'}
     result = {'grades': rows, 'ocr': summary, 'docling': {
-        'used': bool(scans), 'ok': bool(primary), 'pages': [p['page'] for p in scans],
+        'used': bool(fallback), 'ok': bool(docling_lines), 'pages': [p['page'] for p in fallback],
         'suggested': added, 'hints': hints}}
     if include_observations:
         result['observations'] = observations

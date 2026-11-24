@@ -18,5 +18,3 @@ if (!(Test-Path -LiteralPath 'node_modules/tesseract.js')) {
 }
 & $ocrPython -X utf8 prepare_ocr.py
 if ($LASTEXITCODE) { throw 'Локальные модели OCR не подготовлены.' }
-& (Join-Path $PSScriptRoot '.ocr-venv/Scripts/docling-tools.exe') models download layout tableformer --output-dir (Join-Path $PSScriptRoot '.ocr-models/docling')
-if ($LASTEXITCODE) { throw 'Модели Docling не подготовлены.' }

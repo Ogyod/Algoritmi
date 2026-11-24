@@ -6,8 +6,9 @@ import json
 import re
 import unicodedata
 
+from core import OCR_THRESHOLD
+
 WORDS = {'отлично': 5, 'хорошо': 4, 'удовлетворительно': 3, 'неудовлетворительно': 2}
-OCR_THRESHOLD = .80
 WORD_PATTERN = '|'.join(sorted(WORDS, key=len, reverse=True))
 GRADE_END = re.compile(r'^(.+?)\s+(?:([2-5зЗ?])(?:\s*\(?(' + WORD_PATTERN + r')\)?)?|(' + WORD_PATTERN + r'))\s*[.;,_|]*$', re.I)
 SUBJECT_HINTS = ('математик', 'алгебр', 'геометри', 'русский язык', 'литератур', 'истори', 'обществознан',
