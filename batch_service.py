@@ -8,7 +8,7 @@ import tempfile
 import threading
 import uuid
 
-from admissions import GRADE_FIELD, manual, project, stage_submission
+from admissions import GRADE_FIELD, OCR_RESULT_VERSION, manual, project, stage_submission
 from core import CERTIFICATE_TYPES, DOCUMENT_TYPES
 from document_review import apply_review
 from uploads import Problem, prepare_upload, MAX_FILES
@@ -119,17 +119,18 @@ class BatchService:
         kind = document['requested_type']
         if kind == 'foreign':
             analysis = manual(kind, 'Иностранный аттестат или перевод обрабатывается вручную.')
-        elif not lk['missing']:
+        elif not lk['missing'] or (lk['missing'] == [GRADE_FIELD] and lk['complete'] is False):
             analysis = {'type': None, 'fields': {}, 'issues': {}}
         elif kind not in CERTIFICATE_TYPES | {'auto'}:
             analysis = manual(kind, 'Этот тип документа передаётся на ручную проверку.')
         else:
             with self.lock:
-                row = self.db.execute('''SELECT analysis FROM lk_ocr
-                    WHERE applicant=? AND fingerprint=? AND full>=? ORDER BY full DESC LIMIT 1''',
-                    (*lookup, full)).fetchone()
-            if row:
-                analysis, reused = json.loads(row[0]), True
+                cached = [json.loads(row[0]) for row in self.db.execute('''SELECT analysis FROM lk_ocr
+                    WHERE applicant=? AND fingerprint=? AND full>=? ORDER BY full DESC''',
+                    (*lookup, full))]
+            analysis = next((entry for entry in cached if entry.get('version') == OCR_RESULT_VERSION), None)
+            if analysis is not None:
+                reused = True
             else:
                 order = lk['order']
                 if not full and set(lk['roles']) == {'certificate', 'appendix'}:
@@ -139,7 +140,7 @@ class BatchService:
                 if analysis['cacheable']:
                     with self.lock:
                         self.db.execute('INSERT OR REPLACE INTO lk_ocr VALUES (?,?,?,?)',
-                                        (*lookup, full, json.dumps(analysis, ensure_ascii=False)))
+                                        (*lookup, full, json.dumps({**analysis, 'version': OCR_RESULT_VERSION}, ensure_ascii=False)))
                         self.db.commit()
             if kind in CERTIFICATE_TYPES and analysis['type'] in CERTIFICATE_TYPES and kind != analysis['type']:
                 analysis = manual(analysis['type'], 'Тип аттестата в ЛК и на скане различается.')
@@ -168,6 +169,8 @@ class BatchService:
                     self.save(document, status)
                 shutil.rmtree(inputs, ignore_errors=True)
             except Exception as error:
+                if 'lk' in document:
+                    shutil.rmtree(inputs, ignore_errors=True)
                 with self.lock:
                     document['error'] = str(error) if isinstance(error, ValueError) else 'Не удалось обработать аттестат. Проверьте файл и настройку OCR.'
                     self.save(document, 'error')
