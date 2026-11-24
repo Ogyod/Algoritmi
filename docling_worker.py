@@ -18,7 +18,7 @@ def rapid_model_paths(root):
         'eslav_PP-OCRv5_rec_mobile.onnx')]
 
 
-def converter_for(models):
+def converter_for(models, metadata_only=False):
     root = Path(models)
     paths = rapid_model_paths(root)
     artifacts = root / 'docling'
@@ -37,7 +37,7 @@ def converter_for(models):
     options.document_timeout = 90
     options.generate_parsed_pages = True
     options.do_ocr = True
-    options.do_table_structure = True
+    options.do_table_structure = not metadata_only
     options.table_structure_options = TableStructureOptions(mode=TableFormerMode.FAST)
     options.ocr_options = RapidOcrOptions(
         mode=OcrMode.FULL_PAGE, lang=['iso:ru'], scale=1.0, text_score=0.0,
@@ -82,13 +82,15 @@ def extract(page, converter):
 
 
 def main():
-    converter = None
+    converters = {}
     for line in sys.stdin:
         try:
             request = json.loads(line)
             with contextlib.redirect_stdout(sys.stderr):
-                if converter is None:
-                    converter = converter_for(request['models'])
+                metadata_only = request.get('metadata_only', False)
+                if metadata_only not in converters:
+                    converters[metadata_only] = converter_for(request['models'], metadata_only)
+                converter = converters[metadata_only]
                 pages = []
                 for page in request['pages']:
                     try:

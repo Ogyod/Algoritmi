@@ -16,7 +16,7 @@ from document_processing import MAX_PAGES, process, process_group
 from ocr_engines import MODEL_ROOT
 from ocr_process import shutdown_workers
 from ocr_worker import native_tesseract, tesseract_node
-from uploads import MAX_FILE, Problem, unpack_archive
+from uploads import MAX_FILE, MAX_UPLOAD, Problem, unpack_archive
 from http_uploads import HTTPProblem, read_body, read_upload
 from batch_service import BatchService
 
@@ -135,8 +135,12 @@ class Handler(BaseHTTPRequestHandler):
                 raw, filename = read_upload(self)
                 return self.send(200, unpack_archive(raw, filename))
             if self.command == 'POST' and path == '/api/v1/batches':
-                raw, filename = read_upload(self)
-                result = service.submit(raw, filename)
+                mime = self.headers.get('Content-Type', '').split(';', 1)[0].strip().lower()
+                if mime == 'application/json':
+                    result = service.submit_lk(json.loads(read_body(self, MAX_UPLOAD * 4 // 3 + 1024 * 1024)))
+                else:
+                    raw, filename = read_upload(self)
+                    result = service.submit(raw, filename)
                 return self.send(202, result, headers={'Location': result['results_url'], 'Retry-After': '2'})
             if self.command == 'GET' and len(parts) == 4 and parts[:3] == ['api', 'v1', 'batches']:
                 try:
@@ -202,6 +206,11 @@ def process_api_group(files, kind):
         return process_group(files, kind)
 
 
+def process_lk_group(files, full):
+    with OCR_LOCK:
+        return process_group(files, 'auto', integration=True, full=full)
+
+
 class Server(ThreadingHTTPServer):
     def server_close(self):
         super().server_close()
@@ -212,7 +221,7 @@ class Server(ThreadingHTTPServer):
 def make_server(port=8765, root=None, api_key=None):
     http = Server(('127.0.0.1', port), Handler)
     http.api_key = api_key if api_key is not None else os.environ.get('APP_API_KEY', '')
-    http.batches = BatchService(root or ROOT / 'data', process_api_group)
+    http.batches = BatchService(root or ROOT / 'data', process_api_group, process_lk_group)
     return http
 
 

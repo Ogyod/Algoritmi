@@ -44,7 +44,7 @@ def run_engine(engine, pages):
                 'seconds': round(time.perf_counter() - start, 3)}
 
 
-def run_docling(pages, timeout=None):
+def run_docling(pages, timeout=None, metadata_only=False):
     """Read each page with the local Docling converter."""
     try:
         process = worker('docling', [worker_python(), '-u', '-X', 'utf8',
@@ -52,7 +52,8 @@ def run_docling(pages, timeout=None):
                          {**os.environ, 'PYTHONIOENCODING': 'utf-8',
                           'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1',
                           'HF_HUB_DISABLE_TELEMETRY': '1'})
-        response = process.call({'pages': pages, 'models': str(MODEL_ROOT)},
+        response = process.call({'pages': pages, 'models': str(MODEL_ROOT),
+                                 'metadata_only': metadata_only},
                                 timeout=timeout or 120 + 95 * len(pages))
         if response.get('ok'):
             return response
@@ -150,8 +151,15 @@ def usable_page(page, parser, requested_type, embedded_text=False):
     return False
 
 
+def usable_metadata(page):
+    lines = page['lines']
+    return (page['complete'] and bool(lines)
+            and all(line['confidence'] >= OCR_THRESHOLD for line in lines)
+            and classify(' '.join(line['text'] for line in lines)) in DOCUMENT_TYPES)
+
+
 def recognize_document(pages, runner=None, parser=None, include_observations=False,
-                       requested_type='auto', docling_runner=None):
+                       requested_type='auto', docling_runner=None, metadata_only=False, integration=False):
     parser = parser or parse_lines
     runner = runner or run_engine
     digital = [p['pdf_reading'] for p in pages if 'pdf_reading' in p]
@@ -161,7 +169,10 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
         observations.append({'engine': 'pdf_text', 'ok': True, 'error': '',
                              'lines': [line for p in digital for line in p['lines']]})
     started = time.perf_counter()
-    response = (docling_runner or run_docling)(scans) if scans else {}
+    response = {}
+    if scans:
+        response = (docling_runner(scans) if docling_runner else
+                    run_docling(scans, metadata_only=metadata_only))
     docling_seconds = round(time.perf_counter() - started, 3) if scans else 0
     by_page = {p['page']: p for p in response.get('pages', [])}
     primary = [line for p in by_page.values() for line in p['lines']]
@@ -169,7 +180,8 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
         observations.append({'engine': 'docling', 'ok': bool(primary), 'lines': primary,
                              'error': '' if primary else 'Docling не прочитал текст.'})
     fallback = [page for page in scans if page['page'] not in by_page
-                or not usable_page(by_page[page['page']], parser, requested_type)]
+                or not (usable_metadata(by_page[page['page']]) if metadata_only else
+                        usable_page(by_page[page['page']], parser, requested_type))]
     tesseract_seconds = 0
     incomplete = []
     if fallback:
@@ -179,9 +191,11 @@ def recognize_document(pages, runner=None, parser=None, include_observations=Fal
         observations.append(secondary)
         read_pages = {line['page'] for line in secondary['lines'] if line['text'].strip()}
         incomplete = [p['page'] for p in fallback if p['page'] not in read_pages]
-    rows = reconcile(observations, parser=parser)
     table_rows = [{'page': page['page'], 'text': text}
                   for page in by_page.values() for text in page['table']]
+    if integration:
+        return {'observations': observations, 'table_rows': table_rows}
+    rows = reconcile(observations, parser=parser)
     added, hints = add_docling_suggestions(rows, table_rows, parser)
     accepted = sum(row['auto_verified'] for row in rows)
     summary = {'engines': [{'name': o['engine'], 'ok': o['ok'], 'error': o['error']}
