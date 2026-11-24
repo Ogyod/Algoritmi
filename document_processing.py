@@ -9,6 +9,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 import pypdfium2 as pdfium
 import pypdfium2.raw as pdfium_raw
 
+from admissions import analyze
 from core import DOCUMENT_TYPES
 from ocr_adapter import parse_engine_rows, interpret_consensus
 from ocr_engines import recognize_document, usable_page
@@ -50,7 +51,7 @@ def pdf_render_scale(page, width, height):
     return scale
 
 
-def read_pdf_text(page, number, kind):
+def read_pdf_text(page, number, kind, integration=False):
     """Use the text layer on pages without scanned images."""
     try:
         if any(page.get_objects(filter=[pdfium_raw.FPDF_PAGEOBJ_IMAGE])):
@@ -67,10 +68,12 @@ def read_pdf_text(page, number, kind):
     lines = [{'page': number, 'text': line.strip(), 'confidence': 1.0}
              for line in text.splitlines() if line.strip()]
     reading = {'page': number, 'lines': lines, 'complete': True, 'table': []}
+    if integration and lines and any(c.isalpha() for c in text):
+        return reading
     return reading if usable_page(reading, parse_engine_rows, kind, embedded_text=True) else None
 
 
-def process_group(files, kind):
+def process_group(files, kind, *, integration=False, full=True):
     if not isinstance(kind, str) or (kind != 'auto' and kind not in DOCUMENT_TYPES):
         raise ValueError('Неизвестный тип документа.')
     start = perf_counter()
@@ -91,6 +94,9 @@ def process_group(files, kind):
                 enhanced = Path(temp) / f'{number}-enhanced.png'
                 images.append({'page': number, 'path': str(path), 'enhanced_path': str(enhanced),
                                'width': image.width, 'height': image.height})
+            if integration:
+                pages.append({'number': number})
+                return
             image.thumbnail((1000, 1400))
             buffer = io.BytesIO()
             image.save(buffer, 'JPEG', quality=83)
@@ -113,7 +119,13 @@ def process_group(files, kind):
                             w, h = page.get_size()
                             if w <= 0 or h <= 0:
                                 raise ValueError('Некорректный размер страницы PDF.')
-                            reading = read_pdf_text(page, len(pages) + 1, kind)
+                            reading = read_pdf_text(page, len(pages) + 1, kind, integration)
+                            if integration and reading:
+                                images.append({'page': len(pages) + 1, 'pdf_reading': reading})
+                                pages.append({'number': len(pages) + 1})
+                                if len(pages) > MAX_PAGES:
+                                    raise ValueError('В одном документе допускается до 20 страниц.')
+                                continue
                             scale = min(1000 / w, 1400 / h) if reading else pdf_render_scale(page, w, h)
                             bitmap = page.render(scale=scale)
                             try:
@@ -141,6 +153,10 @@ def process_group(files, kind):
                             handle_image(image.copy(), source_name, i + 1)
                 except (UnidentifiedImageError, Image.DecompressionBombError, OSError):
                     raise ValueError('Не удалось прочитать изображение. Используйте PDF, JPEG, PNG, TIFF или WEBP.')
+        if integration:
+            recognition = recognize_document(images, parser=parse_engine_rows, integration=True,
+                                             metadata_only=not full, requested_type=kind)
+            return analyze(recognition, {page['number'] for page in pages}, full)
         prepared = perf_counter()
         recognized = recognize(images, kind)
         interpreted = perf_counter()
